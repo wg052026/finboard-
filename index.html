@@ -82,12 +82,39 @@
   .fg-hist{display:flex;gap:9px;flex-wrap:wrap;justify-content:center;font-size:10px;color:var(--dim);margin-top:3px;}
   .fg-hist b{font-weight:700;}
   .loading-skel{color:var(--faint);font-size:12px;padding:18px 0;text-align:center;}
+
+  /* 페이지 탭 */
+  .pages{display:flex;gap:4px;margin:4px 0 14px;border-bottom:1px solid var(--line);}
+  .pages button{
+    background:none;border:none;border-bottom:2px solid transparent;
+    color:var(--dim);font-size:14px;font-weight:600;padding:9px 16px;cursor:pointer;
+    transition:.14s;margin-bottom:-1px;
+  }
+  .pages button:hover{color:var(--txt);}
+  .pages button.active{color:#fff;border-bottom-color:var(--accent);}
+
+  /* 1페이지 숫자 전용 뷰 */
+  .numgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:9px;}
+  .numcard{
+    background:linear-gradient(180deg,#171821,#13141b);
+    border:1px solid var(--line);border-radius:10px;padding:13px 15px;
+  }
+  .numcard .nlabel{font-size:12px;color:var(--dim);margin-bottom:6px;}
+  .numcard .nval{font-size:25px;font-weight:700;letter-spacing:-.5px;}
+  .numcard .nchg{font-size:13px;font-weight:600;margin-top:3px;}
+  .hidden{display:none;}
 </style>
 </head>
 <body>
   <div class="topbar">
     <h1>📊 실시간 금융 대시보드</h1>
     <span class="updated" id="updated"></span>
+  </div>
+
+  <div class="pages" id="pages">
+    <button data-page="num" class="active">① 요약 (숫자)</button>
+    <button data-page="chart">② 상세 (차트)</button>
+    <button data-page="econ">③ 경제지표</button>
   </div>
 
   <div class="controls">
@@ -97,9 +124,11 @@
     </button>
   </div>
 
+  <div class="numgrid hidden" id="numgrid"></div>
   <div class="grid" id="grid">
     <div class="loading-skel">데이터 불러오는 중…</div>
   </div>
+  <div class="grid hidden" id="econgrid"></div>
 
 <script>
 const RANGES = [
@@ -252,11 +281,16 @@ function updateCard(el, card){
   const col = up?"var(--up)":"var(--down)";
   const colHex = up?"#3fd07a":"#f0556b";
   const diff = price-base;
-  const pct = base? diff/base*100 : 0;
 
   valEl.textContent = fmtNum(price, dec);
   chgEl.style.color = col;
-  chgEl.textContent = `${up?"+":""}${pct.toFixed(2)}% (${up?"+":""}${fmtNum(diff,dec)})`;
+  if(card.diffMode === "pp"){
+    // 퍼센트포인트 차이로 표시 (CPI, 금리차 등)
+    chgEl.textContent = `${up?"+":""}${fmtNum(diff, 2)}%p`;
+  } else {
+    const pct = base? diff/base*100 : 0;
+    chgEl.textContent = `${up?"+":""}${pct.toFixed(2)}% (${up?"+":""}${fmtNum(diff,dec)})`;
+  }
   metaEl.textContent = RANGES.find(r=>r.key===currentRange).label+" 기준";
   buildChart(chart, series, colHex, dec, currentRange);
 }
@@ -311,13 +345,81 @@ function updateFG(el){
   }
 }
 
+// ---------- 숫자 전용 카드 (1페이지) ----------
+function numCardHTML(label, price, base, dec, diffMode){
+  if(price==null){
+    return `<div class="numcard"><div class="nlabel">${label}</div>
+      <div class="nval">—</div><div class="nchg" style="color:var(--faint)">데이터 없음</div></div>`;
+  }
+  const up = base!=null ? price>=base : true;
+  const col = up?"var(--up)":"var(--down)";
+  let chg = "—";
+  if(base!=null){
+    const diff=price-base;
+    if(diffMode === "pp"){
+      chg = `${up?"+":""}${fmtNum(diff,2)}%p`;
+    } else {
+      const pct=base?diff/base*100:0;
+      chg = `${up?"+":""}${pct.toFixed(2)}% (${up?"+":""}${fmtNum(diff,dec)})`;
+    }
+  }
+  return `<div class="numcard">
+    <div class="nlabel">${label}</div>
+    <div class="nval">${fmtNum(price,dec)}</div>
+    <div class="nchg" style="color:${col}">${chg}</div>
+  </div>`;
+}
+
+function renderNumGrid(){
+  const ng = document.getElementById("numgrid");
+  let html = "";
+  // F&G 숫자
+  const fg = DATA.fearGreed||{};
+  if(fg.score!=null){
+    const s=Math.round(fg.score), c=colorForFG(s);
+    html += `<div class="numcard"><div class="nlabel">Fear &amp; Greed</div>
+      <div class="nval" style="color:${c}">${s}</div>
+      <div class="nchg" style="color:${c}">${ratingKo(fg.rating)}</div></div>`;
+  }
+  // 시장 카드 전부 (현재 기간 기준)
+  DATA.cards.forEach(c=>{
+    const p=c.periods[currentRange]||{};
+    const base=(currentRange==="1d")
+      ? (p.prevClose ?? (p.series&&p.series.length?p.series[0][1]:p.price))
+      : (p.series&&p.series.length?p.series[0][1]:p.price);
+    html += numCardHTML(c.label, p.price, base, c.decimals, c.diffMode);
+  });
+  // 경제 카드도 요약에 포함
+  (DATA.econCards||[]).forEach(c=>{
+    const p=c.periods[currentRange]||{};
+    const base=(currentRange==="1d")
+      ? (p.prevClose ?? (p.series&&p.series.length?p.series[0][1]:p.price))
+      : (p.series&&p.series.length?p.series[0][1]:p.price);
+    html += numCardHTML(c.label, p.price, base, c.decimals, c.diffMode);
+  });
+  ng.innerHTML = html;
+}
+
 // ---------- 전체 렌더 ----------
 function renderAll(){
+  // 2페이지: 차트 그리드
   const grid = document.getElementById("grid");
   grid.innerHTML="";
-  // F&G를 맨 앞에
   grid.appendChild(renderFG());
   DATA.cards.forEach(c => grid.appendChild(renderCard(c)));
+
+  // 1페이지: 숫자 그리드
+  renderNumGrid();
+
+  // 3페이지: 경제지표 그리드
+  const eg = document.getElementById("econgrid");
+  eg.innerHTML="";
+  const econ = DATA.econCards||[];
+  if(econ.length===0){
+    eg.innerHTML = `<div class="loading-skel">경제지표 준비 중입니다.</div>`;
+  } else {
+    econ.forEach(c => eg.appendChild(renderCard(c)));
+  }
 
   const u = new Date(DATA.updatedAt);
   document.getElementById("updated").innerHTML =
@@ -341,6 +443,25 @@ async function loadData(){
     btn.classList.remove("loading"); btn.disabled=false;
   }
 }
+
+// ---------- 페이지 탭 전환 ----------
+let currentPage = "num";
+const pagesEl = document.getElementById("pages");
+const panels = {
+  num: document.getElementById("numgrid"),
+  chart: document.getElementById("grid"),
+  econ: document.getElementById("econgrid"),
+};
+function showPage(pg){
+  currentPage = pg;
+  Object.entries(panels).forEach(([k,el])=> el.classList.toggle("hidden", k!==pg));
+  [...pagesEl.children].forEach(b=> b.classList.toggle("active", b.dataset.page===pg));
+}
+[...pagesEl.children].forEach(b=>{
+  b.onclick = ()=> showPage(b.dataset.page);
+});
+// 시작 페이지: 1페이지(숫자)
+showPage("num");
 
 // ---------- 기간 버튼 ----------
 const rangesEl = document.getElementById("ranges");
