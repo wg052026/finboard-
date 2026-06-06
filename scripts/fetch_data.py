@@ -29,20 +29,22 @@ RANGES = {
     "3y":  ("3y",  "1wk"),
 }
 
-# 표시할 카드: (id, 라벨, Yahoo 심볼, 소수자릿수)
+# 표시할 카드: (id, 라벨, Yahoo 심볼, 소수자릿수[, scale][, colorMode])
+# colorMode: "invert"=오르면 빨강, None=오르면 녹색(기본)
 CARDS = [
-    ("chfkrw", "스위스프랑 (CHF/KRW)", "CHFKRW=X", 2),
-    ("usdkrw", "미국달러 (USD/KRW)",   "KRW=X",    2),
-    ("eurkrw", "유로 (EUR/KRW)",       "EURKRW=X", 2),
-    ("jpykrw", "엔 (100엔/KRW)",       "JPYKRW=X", 2, 100),
+    ("chfkrw", "스위스프랑 (CHF/KRW)", "CHFKRW=X", 2, 1, "invert"),
+    ("usdkrw", "미국달러 (USD/KRW)",   "KRW=X",    2, 1, "invert"),
+    ("eurkrw", "유로 (EUR/KRW)",       "EURKRW=X", 2, 1, "invert"),
+    ("jpykrw", "엔 (100엔/KRW)",       "JPYKRW=X", 2, 100, "invert"),
     ("dxy",    "달러인덱스 (DXY)",      "DX-Y.NYB", 3),
-    ("vix",    "VIX 변동성지수",        "^VIX",     2),
+    ("vix",    "VIX 변동성지수",        "^VIX",     2, 1, "invert"),
     ("gspc",   "S&P 500",              "^GSPC",    2),
     ("ixic",   "나스닥 종합",           "^IXIC",    2),
     ("dji",    "다우존스 산업평균",      "^DJI",     2),
-    ("cl",     "WTI 원유",             "CL=F",     2),
     ("ks11",   "코스피 (KOSPI)",       "^KS11",    2),
     ("kq11",   "코스닥 (KOSDAQ)",      "^KQ11",    2),
+    ("cl",     "WTI 원유",             "CL=F",     2, 1, "invert"),
+    ("gold",   "금 (Gold, USD)",       "GC=F",     2),
 ]
 
 
@@ -85,9 +87,10 @@ def fetch_yahoo(symbol, rng, interval):
 
 
 def fetch_card(card):
-    # card: (id, label, symbol, decimals[, scale])
+    # card: (id, label, symbol, decimals[, scale][, colorMode])
     cid, label, symbol, dec = card[0], card[1], card[2], card[3]
     scale = card[4] if len(card) > 4 else 1
+    color_mode = card[5] if len(card) > 5 else None
     periods = {}
     for key, (rng, interval) in RANGES.items():
         try:
@@ -101,7 +104,10 @@ def fetch_card(card):
             periods[key] = d
         except Exception as e:
             periods[key] = {"price": None, "prevClose": None, "series": [], "error": str(e)[:80]}
-    return {"id": cid, "label": label, "symbol": symbol, "decimals": dec, "periods": periods}
+    out = {"id": cid, "label": label, "symbol": symbol, "decimals": dec, "periods": periods}
+    if color_mode:
+        out["colorMode"] = color_mode
+    return out
 
 
 def fetch_fng():
@@ -267,27 +273,35 @@ def build_econ_cards():
         bls = {}
         print("  ! BLS fail:", str(e)[:80])
 
-    def add_yoy_card(cid, label, sid, note):
+    def add_yoy_card(cid, label, sid, note, color_mode="invert"):
         s = bls.get(sid, [])
         yoy = _yoy(s)
         if len(yoy) >= 2:
-            cards.append({
+            c = {
                 "id": cid, "label": label, "symbol": label, "decimals": 2,
                 "diffMode": "pp", "note": note,
                 "asof": _month_label(yoy[-1][0]),
                 "periods": _econ_periods(yoy, yoy[-1][1], yoy[-2][1]),
-            })
+            }
+            if color_mode: c["colorMode"] = color_mode
+            cards.append(c)
 
-    def add_level_card(cid, label, sid, note, dec=1, suffix=""):
+    def add_level_card(cid, label, sid, note, dec=1, suffix="", color_mode="invert"):
         s = bls.get(sid, [])
         if len(s) >= 2:
-            cards.append({
+            c = {
                 "id": cid, "label": label, "symbol": label, "decimals": dec,
                 "diffMode": "pp", "note": note, "unit": suffix,
                 "asof": _month_label(s[-1][0]),
                 "periods": _econ_periods(s, s[-1][1], s[-2][1]),
-            })
+            }
+            if color_mode: c["colorMode"] = color_mode
+            cards.append(c)
 
+    # 순서: PPI → CPI → 근원CPI → 실업률 → 고용 → 기준금리
+    # PPI (전년比)
+    add_yoy_card("ppi_yoy", "생산자물가 PPI (전년比 %)", SID["ppi"],
+                 "매월 중순 발표 · 전월 기준 · CPI 선행지표")
     # CPI (전년比)
     add_yoy_card("cpi_yoy", "미국 CPI (전년比 %)", SID["cpi"],
                  "매월 중순 발표 · 전월 기준")
@@ -297,7 +311,7 @@ def build_econ_cards():
     # 실업률 (레벨 %)
     add_level_card("unemp", "미국 실업률 (%)", SID["unemp"],
                    "매월 초 발표 (첫 금요일) · 전월 기준", dec=1)
-    # 비농업 고용 (전월대비 증감, 천명)
+    # 비농업 고용 (전월대비 증감, 천명) — 오르면 녹색(기본)
     s_nfp = bls.get(SID["nfp"], [])
     nfp_chg = _mom_change(s_nfp)
     if len(nfp_chg) >= 2:
@@ -307,17 +321,14 @@ def build_econ_cards():
             "asof": _month_label(nfp_chg[-1][0]),
             "periods": _econ_periods(nfp_chg, nfp_chg[-1][1], nfp_chg[-2][1]),
         })
-    # PPI (전년比)
-    add_yoy_card("ppi_yoy", "생산자물가 PPI (전년比 %)", SID["ppi"],
-                 "매월 중순 발표 · 전월 기준 · CPI 선행지표")
 
-    # ---- 기준금리 EFFR (뉴욕연준) ----
+    # ---- 기준금리 EFFR (뉴욕연준) ---- 오르면 빨강
     try:
         effr = fetch_effr()
         if effr and len(effr) >= 2:
             cards.append({
                 "id": "effr", "label": "미국 기준금리 EFFR (%)", "symbol": "EFFR",
-                "decimals": 2, "diffMode": "pp",
+                "decimals": 2, "diffMode": "pp", "colorMode": "invert",
                 "note": "FOMC 회의 후 변경 (연 8회) · 실효 연방기금금리",
                 "asof": _day_label(effr[-1][0]),
                 "periods": _effr_periods(effr),
@@ -415,7 +426,7 @@ def build_yield_cards(tdata):
     # 기간별 길이(거래일 수) 근사. 일/시간봉이 없어 일별로 통일.
     span = {"1d": 2, "5d": 6, "1mo": 22, "1y": 252, "3y": len(s2)}
 
-    def make_card(cid, label, series):
+    def make_card(cid, label, series, color_mode=None):
         periods = {}
         for key, n in span.items():
             s = series[-n:] if len(series) > n else series[:]
@@ -424,16 +435,19 @@ def build_yield_cards(tdata):
             # 1일은 직전 거래일 대비, 그 외는 구간 시작 대비
             base = prev if key in ("1d",) else (s[0][1] if s else None)
             periods[key] = {"price": price, "prevClose": base, "series": s}
-        return {"id": cid, "label": label, "symbol": label,
+        card = {"id": cid, "label": label, "symbol": label,
                 "decimals": 3, "diffMode": "pp", "periods": periods}
+        if color_mode:
+            card["colorMode"] = color_mode
+        return card
 
-    card10 = make_card("tnx", "미국채 10년 금리", s10)
-    card2 = make_card("ust2y", "미국채 2년 금리", s2)
+    card10 = make_card("tnx", "미국채 10년 금리", s10, "invert")
+    card2 = make_card("ust2y", "미국채 2년 금리", s2, "invert")
 
     # 금리차 = 10년 - 2년 (날짜 매칭)
     m2 = {t: v for t, v in s2}
     diff_series = [[t, round(v - m2[t], 4)] for t, v in s10 if t in m2]
-    cardSp = make_card("spread102", "10-2년 장단기 금리차", diff_series)
+    cardSp = make_card("spread102", "10-2년 장단기 금리차", diff_series, "negRed")
     cardSp["label"] = "10-2년 장단기 금리차"
 
     return [card10, card2, cardSp]

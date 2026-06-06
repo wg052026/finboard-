@@ -25,12 +25,19 @@ def fmt(n, dec):
     return f"{n:,.{dec}f}"
 
 
-def row_html(label, price, base, dec, diff_mode=None):
+def row_html(label, price, base, dec, diff_mode=None, color_mode=None):
     if price is None:
         return f'<tr><td style="padding:7px 12px;border-bottom:1px solid #eee">{label}</td>' \
                f'<td colspan="2" style="padding:7px 12px;border-bottom:1px solid #eee;color:{DIM}">데이터 없음</td></tr>'
     up = base is not None and price >= base
-    col = UP if up else DOWN
+    # 색상 결정: colorMode에 따라 녹/적 반전
+    if color_mode == "negRed":
+        green = price >= 0
+    elif color_mode == "invert":
+        green = not up
+    else:
+        green = up
+    col = UP if green else DOWN
     if base is None:
         chg = "—"
     elif diff_mode == "pp":
@@ -69,7 +76,7 @@ def build_email(data):
         if base is None and p.get("series"):
             base = p["series"][0][1]
         dec = c["decimals"] if c.get("diffMode") == "pp" else 0
-        body_rows += row_html(c["label"], price, base, dec, c.get("diffMode"))
+        body_rows += row_html(c["label"], price, base, dec, c.get("diffMode"), c.get("colorMode"))
 
     # 경제지표 (3페이지) — 라벨에 기준월 표기
     econ_rows = ""
@@ -79,7 +86,7 @@ def build_email(data):
         asof = c.get("asof")
         lbl = c["label"] + (f' <span style="color:#aaa;font-size:11px">({asof})</span>' if asof else "")
         econ_rows += row_html(lbl, p.get("price"),
-                              p.get("prevClose"), dec, c.get("diffMode"))
+                              p.get("prevClose"), dec, c.get("diffMode"), c.get("colorMode"))
 
     # Fear & Greed
     fg_html = ""
