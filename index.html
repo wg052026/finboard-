@@ -287,11 +287,22 @@ function updateCard(el, card){
   if(card.diffMode === "pp"){
     // 퍼센트포인트 차이로 표시 (CPI, 금리차 등)
     chgEl.textContent = `${up?"+":""}${fmtNum(diff, 2)}%p`;
+  } else if(card.diffMode === "delta"){
+    // 절대 증감으로 표시 (비농업고용 등)
+    chgEl.textContent = `전월比 ${up?"+":""}${fmtNum(diff, dec)}`;
   } else {
     const pct = base? diff/base*100 : 0;
     chgEl.textContent = `${up?"+":""}${pct.toFixed(2)}% (${up?"+":""}${fmtNum(diff,dec)})`;
   }
-  metaEl.textContent = RANGES.find(r=>r.key===currentRange).label+" 기준";
+  // 경제지표는 발표 기준월과 발표 일정을 함께 표시
+  if(card.asof || card.note){
+    const parts = [];
+    if(card.asof) parts.push(`<b style="color:var(--dim)">${card.asof}</b> 기준`);
+    if(card.note) parts.push(card.note);
+    metaEl.innerHTML = parts.join(" · ");
+  } else {
+    metaEl.textContent = RANGES.find(r=>r.key===currentRange).label+" 기준";
+  }
   buildChart(chart, series, colHex, dec, currentRange);
 }
 
@@ -358,6 +369,8 @@ function numCardHTML(label, price, base, dec, diffMode){
     const diff=price-base;
     if(diffMode === "pp"){
       chg = `${up?"+":""}${fmtNum(diff,2)}%p`;
+    } else if(diffMode === "delta"){
+      chg = `전월比 ${up?"+":""}${fmtNum(diff,dec)}`;
     } else {
       const pct=base?diff/base*100:0;
       chg = `${up?"+":""}${pct.toFixed(2)}% (${up?"+":""}${fmtNum(diff,dec)})`;
