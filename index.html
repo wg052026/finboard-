@@ -387,7 +387,9 @@ function renderNumGrid(){
     const base=(currentRange==="1d")
       ? (p.prevClose ?? (p.series&&p.series.length?p.series[0][1]:p.price))
       : (p.series&&p.series.length?p.series[0][1]:p.price);
-    html += numCardHTML(c.label, p.price, base, c.decimals, c.diffMode);
+    // 금리·CPI(pp) 외에는 요약에서 정수로 반올림
+    const dec = (c.diffMode==="pp") ? c.decimals : 0;
+    html += numCardHTML(c.label, p.price, base, dec, c.diffMode);
   });
   // 경제 카드도 요약에 포함
   (DATA.econCards||[]).forEach(c=>{
@@ -395,7 +397,8 @@ function renderNumGrid(){
     const base=(currentRange==="1d")
       ? (p.prevClose ?? (p.series&&p.series.length?p.series[0][1]:p.price))
       : (p.series&&p.series.length?p.series[0][1]:p.price);
-    html += numCardHTML(c.label, p.price, base, c.decimals, c.diffMode);
+    const dec = (c.diffMode==="pp") ? c.decimals : 0;
+    html += numCardHTML(c.label, p.price, base, dec, c.diffMode);
   });
   ng.innerHTML = html;
 }
