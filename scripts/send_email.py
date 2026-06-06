@@ -25,13 +25,18 @@ def fmt(n, dec):
     return f"{n:,.{dec}f}"
 
 
-def row_html(label, price, base, dec):
+def row_html(label, price, base, dec, diff_mode=None):
     if price is None:
         return f'<tr><td style="padding:7px 12px;border-bottom:1px solid #eee">{label}</td>' \
                f'<td colspan="2" style="padding:7px 12px;border-bottom:1px solid #eee;color:{DIM}">데이터 없음</td></tr>'
     up = base is not None and price >= base
     col = UP if up else DOWN
-    if base:
+    if base is None:
+        chg = "—"
+    elif diff_mode == "pp":
+        diff = price - base
+        chg = f'{"+" if up else ""}{fmt(diff, 2)}%p'
+    elif base:
         diff = price - base
         pct = diff / base * 100
         chg = f'{"+" if up else ""}{pct:.2f}% ({"+" if up else ""}{fmt(diff, dec)})'
@@ -60,7 +65,14 @@ def build_email(data):
         base = p.get("prevClose")
         if base is None and p.get("series"):
             base = p["series"][0][1]
-        body_rows += row_html(c["label"], price, base, c["decimals"])
+        body_rows += row_html(c["label"], price, base, c["decimals"], c.get("diffMode"))
+
+    # 경제지표 (3페이지)
+    econ_rows = ""
+    for c in data.get("econCards", []):
+        p = c["periods"].get("1d", {})
+        econ_rows += row_html(c["label"], p.get("price"),
+                              p.get("prevClose"), c["decimals"], c.get("diffMode"))
 
     # Fear & Greed
     fg_html = ""
@@ -91,6 +103,9 @@ def build_email(data):
         </tr></thead>
         <tbody>{body_rows}</tbody>
       </table>
+      {('<div style="margin-top:18px;font-size:12px;font-weight:700;color:#555">경제지표</div>'
+        '<table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:6px"><tbody>'
+        + econ_rows + '</tbody></table>') if econ_rows else ''}
       <p style="font-size:11px;color:#aaa;margin-top:16px">
         전일종가 대비 등락 기준. 자세한 차트는 대시보드에서 확인하세요.
       </p>
