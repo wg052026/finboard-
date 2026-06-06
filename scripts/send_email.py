@@ -120,11 +120,23 @@ def main():
         data = json.load(f)
     html, upstr = build_email(data)
 
-    host = os.environ["SMTP_HOST"]
-    port = int(os.environ.get("SMTP_PORT", "465"))
-    user = os.environ["SMTP_USER"]
-    pwd = os.environ["SMTP_PASS"]
-    to = [a.strip() for a in os.environ["MAIL_TO"].split(",") if a.strip()]
+    host = (os.environ.get("SMTP_HOST") or "").strip()
+    port_raw = (os.environ.get("SMTP_PORT") or "").strip()
+    user = (os.environ.get("SMTP_USER") or "").strip()
+    pwd = os.environ.get("SMTP_PASS") or ""
+    to = [a.strip() for a in (os.environ.get("MAIL_TO") or "").split(",") if a.strip()]
+
+    # 어떤 값이 비었는지 명확히 알려준다
+    missing = []
+    if not host: missing.append("SMTP_HOST")
+    if not user: missing.append("SMTP_USER")
+    if not pwd: missing.append("SMTP_PASS")
+    if not to: missing.append("MAIL_TO")
+    if missing:
+        raise SystemExit("다음 GitHub Secret이 비어 있습니다: " + ", ".join(missing)
+                         + " (Settings → Secrets and variables → Actions에서 등록하세요)")
+
+    port = int(port_raw) if port_raw.isdigit() else 587  # 비어 있으면 587(STARTTLS)
 
     msg = MIMEMultipart("alternative")
     prefix = "[테스트] " if os.environ.get("IS_TEST") == "true" else ""
