@@ -34,7 +34,7 @@ CARDS = [
     ("chfkrw", "스위스프랑 (CHF/KRW)", "CHFKRW=X", 2),
     ("usdkrw", "미국달러 (USD/KRW)",   "KRW=X",    2),
     ("eurkrw", "유로 (EUR/KRW)",       "EURKRW=X", 2),
-    ("jpykrw", "엔 (JPY/KRW)",         "JPYKRW=X", 3),
+    ("jpykrw", "엔 (100엔/KRW)",       "JPYKRW=X", 2, 100),
     ("dxy",    "달러인덱스 (DXY)",      "DX-Y.NYB", 3),
     ("vix",    "VIX 변동성지수",        "^VIX",     2),
     ("gspc",   "S&P 500",              "^GSPC",    2),
@@ -85,11 +85,20 @@ def fetch_yahoo(symbol, rng, interval):
 
 
 def fetch_card(card):
-    cid, label, symbol, dec = card
+    # card: (id, label, symbol, decimals[, scale])
+    cid, label, symbol, dec = card[0], card[1], card[2], card[3]
+    scale = card[4] if len(card) > 4 else 1
     periods = {}
     for key, (rng, interval) in RANGES.items():
         try:
-            periods[key] = fetch_yahoo(symbol, rng, interval)
+            d = fetch_yahoo(symbol, rng, interval)
+            if scale != 1:
+                if d.get("price") is not None:
+                    d["price"] = round(d["price"] * scale, 4)
+                if d.get("prevClose") is not None:
+                    d["prevClose"] = round(d["prevClose"] * scale, 4)
+                d["series"] = [[t, round(v * scale, 4)] for t, v in d.get("series", [])]
+            periods[key] = d
         except Exception as e:
             periods[key] = {"price": None, "prevClose": None, "series": [], "error": str(e)[:80]}
     return {"id": cid, "label": label, "symbol": symbol, "decimals": dec, "periods": periods}
