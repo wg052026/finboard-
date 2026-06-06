@@ -3,10 +3,10 @@ name: 금융 대시보드 업데이트
 on:
   schedule:
     # UTC 기준. KST = UTC+9.
-    # 데이터 갱신: 매시간 정각
+    # 평일 데이터 갱신: 매시간 정각 (원하면 조정)
     - cron: "0 * * * *"
-    # 메일 발송: UTC 22:30 = KST 익일 07:30
-    - cron: "30 22 * * *"
+    # 매일 메일 발송: UTC 03:00 = KST 12:00 (정오)
+    - cron: "0 3 * * *"
   workflow_dispatch:   # 수동 실행 버튼
 
 permissions:
@@ -39,8 +39,8 @@ jobs:
             git push
           fi
 
-      - name: 일일 메일 발송 (UTC 22:30 스케줄에서만)
-        if: github.event.schedule == '30 22 * * *'
+      - name: 일일 메일 발송 (UTC 03:00 스케줄에서만)
+        if: github.event.schedule == '0 3 * * *'
         env:
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
