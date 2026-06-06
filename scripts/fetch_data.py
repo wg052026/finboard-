@@ -36,8 +36,6 @@ CARDS = [
     ("eurkrw", "유로 (EUR/KRW)",       "EURKRW=X", 2),
     ("jpykrw", "엔 (JPY/KRW)",         "JPYKRW=X", 3),
     ("dxy",    "달러인덱스 (DXY)",      "DX-Y.NYB", 3),
-    ("tnx",    "미국채 10년 금리",      "^TNX",     3),
-    ("ust2y",  "미국채 2년 금리",       "2YY=F",    3),
     ("vix",    "VIX 변동성지수",        "^VIX",     2),
     ("gspc",   "S&P 500",              "^GSPC",    2),
     ("ixic",   "나스닥 종합",           "^IXIC",    2),
@@ -205,7 +203,73 @@ def build_cpi_card():
                             for k in RANGES}}
 
 
-def build_spread_card(cards):
+def fetch_treasury_yields():
+    """미 재무부 일별 par yield 곡선에서 2년·10년 금리 시계열을 받는다.
+    반환: {'2y': [[ms,val],...], '10y': [...]} (최근 약 3년)"""
+    import re
+    now_year = datetime.datetime.now(datetime.timezone.utc).year
+    rows = []  # (date_str, v2, v10)
+    for y in range(now_year - 3, now_year + 1):
+        url = ("https://home.treasury.gov/resource-center/data-chart-center/"
+               "interest-rates/pages/xml?data=daily_treasury_yield_curve"
+               f"&field_tdr_date_value={y}")
+        try:
+            x = http_get(url, YH_HEADERS).decode()
+        except Exception:
+            continue
+        for blk in re.findall(r"<m:properties>(.*?)</m:properties>", x, re.S):
+            d = re.search(r"<d:NEW_DATE[^>]*>(.*?)</d:NEW_DATE>", blk)
+            t2 = re.search(r"<d:BC_2YEAR[^>]*>(.*?)</d:BC_2YEAR>", blk)
+            t10 = re.search(r"<d:BC_10YEAR[^>]*>(.*?)</d:BC_10YEAR>", blk)
+            if d and t2 and t10 and t2.group(1) and t10.group(1):
+                rows.append((d.group(1)[:10], float(t2.group(1)), float(t10.group(1))))
+    rows.sort(key=lambda r: r[0])
+
+    def to_ms(ds):
+        dt = datetime.datetime.strptime(ds, "%Y-%m-%d").replace(tzinfo=datetime.timezone.utc)
+        return int(dt.timestamp() * 1000)
+
+    s2 = [[to_ms(d), v2] for d, v2, _ in rows]
+    s10 = [[to_ms(d), v10] for d, _, v10 in rows]
+    return {"2y": s2, "10y": s10}
+
+
+def build_yield_cards(tdata):
+    """재무부 2년·10년 시계열로 10년·2년 금리 카드와 10-2 금리차 카드를 만든다.
+    Yahoo의 기간 구간에 맞춰 일별 데이터를 길이로 잘라 제공한다."""
+    s2 = tdata.get("2y", [])
+    s10 = tdata.get("10y", [])
+    if len(s2) < 2 or len(s10) < 2:
+        return []
+
+    # 기간별 길이(거래일 수) 근사. 일/시간봉이 없어 일별로 통일.
+    span = {"1d": 2, "5d": 6, "1mo": 22, "1y": 252, "3y": len(s2)}
+
+    def make_card(cid, label, series):
+        periods = {}
+        for key, n in span.items():
+            s = series[-n:] if len(series) > n else series[:]
+            price = s[-1][1] if s else None
+            prev = s[-2][1] if len(s) >= 2 else None
+            # 1일은 직전 거래일 대비, 그 외는 구간 시작 대비
+            base = prev if key in ("1d",) else (s[0][1] if s else None)
+            periods[key] = {"price": price, "prevClose": base, "series": s}
+        return {"id": cid, "label": label, "symbol": label,
+                "decimals": 3, "diffMode": "pp", "periods": periods}
+
+    card10 = make_card("tnx", "미국채 10년 금리", s10)
+    card2 = make_card("ust2y", "미국채 2년 금리", s2)
+
+    # 금리차 = 10년 - 2년 (날짜 매칭)
+    m2 = {t: v for t, v in s2}
+    diff_series = [[t, round(v - m2[t], 4)] for t, v in s10 if t in m2]
+    cardSp = make_card("spread102", "10-2년 장단기 금리차", diff_series)
+    cardSp["label"] = "10-2년 장단기 금리차"
+
+    return [card10, card2, cardSp]
+
+
+
     """10년 금리(tnx)와 2년 금리(ust2y) 시계열을 빼서 10-2 장단기 금리차 카드 생성.
     두 심볼의 타임스탬프 시각이 달라, 날짜(UTC 연-월-일) 단위로 묶어 매칭한다."""
     import datetime as _dt
@@ -255,14 +319,17 @@ def build_spread_card(cards):
 def main():
     cards = [fetch_card(c) for c in CARDS]
 
-    # 10-2년 장단기 금리차 카드를 2년 금리(ust2y) 바로 뒤에 삽입
-    spread = build_spread_card(cards)
-    if spread:
-        idx = next((i for i, c in enumerate(cards) if c["id"] == "ust2y"), None)
-        if idx is not None:
-            cards.insert(idx + 1, spread)
-        else:
-            cards.append(spread)
+    # 미 재무부 공식 par yield로 10년·2년·금리차 카드 생성 → DXY 뒤에 삽입
+    try:
+        tdata = fetch_treasury_yields()
+        yield_cards = build_yield_cards(tdata)
+    except Exception as e:
+        print("  ! treasury fetch fail:", str(e)[:80])
+        yield_cards = []
+    if yield_cards:
+        idx = next((i for i, c in enumerate(cards) if c["id"] == "dxy"), None)
+        pos = (idx + 1) if idx is not None else len(cards)
+        cards[pos:pos] = yield_cards
 
     # 3페이지(경제지표) 카드들
     econ_cards = []
