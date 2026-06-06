@@ -163,6 +163,26 @@ function fmtDate(ms, range){
   return d.toLocaleDateString("ko-KR",{year:"2-digit",month:"numeric",day:"numeric"});
 }
 
+// 색상 결정: colorMode에 따라 상승/하락의 색을 정한다.
+//  - "invert": 오르면 빨강, 내리면 녹색 (환율·금리·VIX·원유 등)
+//  - "negRed": 값이 음수면 빨강, 0 이상이면 녹색 (금리차)
+//  - 기본    : 오르면 녹색 (지수·금·고용 등)
+// 반환: {isPos: bool, hex, varColor}  (isPos=녹색이면 true)
+function decideColor(price, base, colorMode){
+  let green;
+  if(colorMode === "negRed"){
+    green = price >= 0;
+  } else {
+    const up = (base!=null) ? price >= base : true;
+    green = (colorMode === "invert") ? !up : up;
+  }
+  return {
+    green,
+    hex: green ? "#3fd07a" : "#f0556b",
+    varColor: green ? "var(--up)" : "var(--down)",
+  };
+}
+
 // ---------- 스파크라인 + 호버 ----------
 function buildChart(container, series, color, dec, range, valSuffix=""){
   container.innerHTML = "";
@@ -278,8 +298,9 @@ function updateCard(el, card){
     ? (p.prevClose ?? (series.length?series[0][1]:price))
     : (series.length?series[0][1]:price);
   const up = price>=base;
-  const col = up?"var(--up)":"var(--down)";
-  const colHex = up?"#3fd07a":"#f0556b";
+  const c = decideColor(price, base, card.colorMode);
+  const col = c.varColor;
+  const colHex = c.hex;
   const diff = price-base;
 
   valEl.textContent = fmtNum(price, dec);
@@ -357,13 +378,13 @@ function updateFG(el){
 }
 
 // ---------- 숫자 전용 카드 (1페이지) ----------
-function numCardHTML(label, price, base, dec, diffMode){
+function numCardHTML(label, price, base, dec, diffMode, colorMode){
   if(price==null){
     return `<div class="numcard"><div class="nlabel">${label}</div>
       <div class="nval">—</div><div class="nchg" style="color:var(--faint)">데이터 없음</div></div>`;
   }
   const up = base!=null ? price>=base : true;
-  const col = up?"var(--up)":"var(--down)";
+  const col = decideColor(price, base, colorMode).varColor;
   let chg = "—";
   if(base!=null){
     const diff=price-base;
@@ -400,9 +421,8 @@ function renderNumGrid(){
     const base=(currentRange==="1d")
       ? (p.prevClose ?? (p.series&&p.series.length?p.series[0][1]:p.price))
       : (p.series&&p.series.length?p.series[0][1]:p.price);
-    // 금리·CPI(pp) 외에는 요약에서 정수로 반올림
     const dec = (c.diffMode==="pp") ? c.decimals : 0;
-    html += numCardHTML(c.label, p.price, base, dec, c.diffMode);
+    html += numCardHTML(c.label, p.price, base, dec, c.diffMode, c.colorMode);
   });
   // 경제 카드도 요약에 포함
   (DATA.econCards||[]).forEach(c=>{
@@ -411,7 +431,7 @@ function renderNumGrid(){
       ? (p.prevClose ?? (p.series&&p.series.length?p.series[0][1]:p.price))
       : (p.series&&p.series.length?p.series[0][1]:p.price);
     const dec = (c.diffMode==="pp") ? c.decimals : 0;
-    html += numCardHTML(c.label, p.price, base, dec, c.diffMode);
+    html += numCardHTML(c.label, p.price, base, dec, c.diffMode, c.colorMode);
   });
   ng.innerHTML = html;
 }
@@ -462,37 +482,49 @@ async function loadData(){
 
 // ---------- 페이지 탭 전환 ----------
 let currentPage = "num";
+// 페이지별 기본/현재 기간 (요약=1일, 상세=5일, 경제=1년)
+const pageRange = { num:"1d", chart:"5d", econ:"1y" };
 const pagesEl = document.getElementById("pages");
 const panels = {
   num: document.getElementById("numgrid"),
   chart: document.getElementById("grid"),
   econ: document.getElementById("econgrid"),
 };
+function syncRangeButtons(){
+  [...rangesEl.children].forEach(c=>
+    c.classList.toggle("active", c.dataset.key===currentRange));
+}
 function showPage(pg){
   currentPage = pg;
+  currentRange = pageRange[pg] || "1d";   // 페이지의 기간으로 전환
   Object.entries(panels).forEach(([k,el])=> el.classList.toggle("hidden", k!==pg));
   [...pagesEl.children].forEach(b=> b.classList.toggle("active", b.dataset.page===pg));
+  syncRangeButtons();
+  if(DATA) renderAll();
 }
 [...pagesEl.children].forEach(b=>{
   b.onclick = ()=> showPage(b.dataset.page);
 });
-// 시작 페이지: 1페이지(숫자)
-showPage("num");
 
 // ---------- 기간 버튼 ----------
 const rangesEl = document.getElementById("ranges");
 RANGES.forEach(rg=>{
   const b=document.createElement("button");
   b.textContent=rg.label;
+  b.dataset.key=rg.key;
   if(rg.key===currentRange) b.classList.add("active");
   b.onclick=()=>{
     if(rg.key===currentRange) return;
     currentRange=rg.key;
-    [...rangesEl.children].forEach(c=>c.classList.toggle("active",c===b));
+    pageRange[currentPage]=rg.key;   // 이 페이지의 기간 기억
+    syncRangeButtons();
     if(DATA) renderAll();   // 재요청 없이 이미 받은 데이터로 다시 그림
   };
   rangesEl.appendChild(b);
 });
+
+// 시작 페이지: 1페이지(숫자, 1일)
+showPage("num");
 
 // 리셋(새로고침) 버튼 — 누를 때만 data.json 재요청
 document.getElementById("resetBtn").onclick = loadData;
