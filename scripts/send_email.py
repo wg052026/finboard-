@@ -65,14 +65,16 @@ def build_email(data):
         base = p.get("prevClose")
         if base is None and p.get("series"):
             base = p["series"][0][1]
-        body_rows += row_html(c["label"], price, base, c["decimals"], c.get("diffMode"))
+        dec = c["decimals"] if c.get("diffMode") == "pp" else 0
+        body_rows += row_html(c["label"], price, base, dec, c.get("diffMode"))
 
     # 경제지표 (3페이지)
     econ_rows = ""
     for c in data.get("econCards", []):
         p = c["periods"].get("1d", {})
+        dec = c["decimals"] if c.get("diffMode") == "pp" else 0
         econ_rows += row_html(c["label"], p.get("price"),
-                              p.get("prevClose"), c["decimals"], c.get("diffMode"))
+                              p.get("prevClose"), dec, c.get("diffMode"))
 
     # Fear & Greed
     fg_html = ""
