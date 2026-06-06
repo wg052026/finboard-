@@ -8,6 +8,11 @@ on:
     # 매일 메일 발송: UTC 03:00 = KST 12:00 (정오)
     - cron: "0 3 * * *"
   workflow_dispatch:   # 수동 실행 버튼
+    inputs:
+      send_test_email:
+        description: "테스트 메일 보내기 (체크하면 즉시 발송)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -39,12 +44,13 @@ jobs:
             git push
           fi
 
-      - name: 일일 메일 발송 (UTC 03:00 스케줄에서만)
-        if: github.event.schedule == '0 3 * * *'
+      - name: 메일 발송 (정오 스케줄 또는 테스트 체크 시)
+        if: github.event.schedule == '0 3 * * *' || github.event.inputs.send_test_email == 'true'
         env:
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           MAIL_TO:   ${{ secrets.MAIL_TO }}
+          IS_TEST:   ${{ github.event.inputs.send_test_email }}
         run: python scripts/send_email.py
