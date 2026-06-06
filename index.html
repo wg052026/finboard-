@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>실시간 금융 대시보드</title>
+<style>
+  :root{
+    --bg:#0c0d12; --card:#15161d; --line:#262833; --line2:#333646;
+    --txt:#e8e9ef; --dim:#8a8d9c; --faint:#5f6273;
+    --up:#3fd07a; --down:#f0556b; --accent:#3a63b0; --accent2:#2a4d8f;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{
+    background:
+      radial-gradient(1200px 600px at 80% -10%, #16182400, #0c0d12 60%),
+      var(--bg);
+    color:var(--txt);
+    font-family:-apple-system,"Segoe UI","Malgun Gothic",sans-serif;
+    padding:14px;
+    -webkit-font-smoothing:antialiased;
+  }
+  .topbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:6px;}
+  h1{font-size:17px;font-weight:700;letter-spacing:-.2px;}
+  .updated{font-size:11px;color:var(--faint);}
+  .updated b{color:var(--dim);font-weight:600;}
+  .controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0 14px;}
+  .ranges{display:flex;gap:6px;flex-wrap:wrap;}
+  .ranges button{
+    background:var(--card);color:var(--dim);border:1px solid var(--line);
+    border-radius:8px;padding:7px 15px;font-size:12.5px;font-weight:600;
+    cursor:pointer;transition:.14s;
+  }
+  .ranges button:hover{border-color:var(--line2);color:var(--txt);}
+  .ranges button.active{background:var(--accent2);border-color:var(--accent);color:#fff;}
+  .reset{
+    margin-left:auto;background:var(--card);color:var(--dim);
+    border:1px solid var(--line);border-radius:8px;padding:7px 16px;
+    font-size:12.5px;font-weight:600;cursor:pointer;transition:.14s;
+    display:inline-flex;align-items:center;gap:7px;
+  }
+  .reset:hover{border-color:var(--up);color:var(--up);}
+  .reset:disabled{opacity:.5;cursor:default;}
+  .reset .spin{width:12px;height:12px;border:2px solid var(--faint);
+    border-top-color:var(--up);border-radius:50%;display:none;animation:sp .7s linear infinite;}
+  .reset.loading .spin{display:inline-block;}
+  @keyframes sp{to{transform:rotate(360deg);}}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:11px;}
+  .card{
+    background:linear-gradient(180deg,#171821,#13141b);
+    border:1px solid var(--line);border-radius:12px;overflow:hidden;
+    display:flex;flex-direction:column;min-height:215px;
+  }
+  .card .label{font-size:12.5px;font-weight:600;padding:11px 13px 9px;color:#cdd0dc;}
+  .card .body{flex:1;display:flex;flex-direction:column;padding:0 13px 12px;min-height:0;}
+  .price-row{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;}
+  .val{font-size:27px;font-weight:700;letter-spacing:-.5px;}
+  .chg{font-size:13px;font-weight:600;}
+  .meta{font-size:10px;color:var(--faint);margin-top:2px;}
+  .chart-wrap{flex:1;position:relative;margin-top:8px;min-height:70px;}
+  svg.chart{width:100%;height:100%;display:block;overflow:visible;}
+  .hoverline{stroke:var(--faint);stroke-width:1;stroke-dasharray:3 3;opacity:0;}
+  .hoverdot{fill:#fff;stroke-width:2;opacity:0;}
+  .tip{
+    position:absolute;pointer-events:none;opacity:0;transform:translate(-50%,-115%);
+    background:#0c0d12ee;border:1px solid var(--line2);border-radius:7px;
+    padding:5px 9px;font-size:11px;white-space:nowrap;z-index:5;transition:opacity .08s;
+  }
+  .tip .tv{font-weight:700;font-size:12.5px;}
+  .tip .td{color:var(--dim);font-size:10px;margin-top:1px;}
+  .err{font-size:11px;color:#d68;padding:10px 0;}
+
+  /* Fear & Greed */
+  .fg-body{flex:1;display:flex;flex-direction:column;padding:0 13px 12px;min-height:0;}
+  .fg-num{display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;gap:5px;}
+  .fg-score{font-size:50px;font-weight:800;line-height:1;}
+  .fg-rating{font-size:14px;font-weight:700;}
+  .fg-bar{width:92%;height:8px;border-radius:5px;margin-top:5px;position:relative;
+    background:linear-gradient(90deg,#e0556b,#e0a845,#d8d845,#8fc945,#3fd07a);}
+  .fg-bar .pin{position:absolute;top:-3px;width:3px;height:14px;background:#fff;border-radius:2px;transform:translateX(-50%);}
+  .fg-hist{display:flex;gap:9px;flex-wrap:wrap;justify-content:center;font-size:10px;color:var(--dim);margin-top:3px;}
+  .fg-hist b{font-weight:700;}
+  .loading-skel{color:var(--faint);font-size:12px;padding:18px 0;text-align:center;}
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>📊 실시간 금융 대시보드</h1>
+    <span class="updated" id="updated"></span>
+  </div>
+
+  <div class="controls">
+    <div class="ranges" id="ranges"></div>
+    <button class="reset" id="resetBtn">
+      <span class="spin"></span><span class="rtxt">↻ 새로고침</span>
+    </button>
+  </div>
+
+  <div class="grid" id="grid">
+    <div class="loading-skel">데이터 불러오는 중…</div>
+  </div>
+
+<script>
+const RANGES = [
+  {key:"1d", label:"1일"},
+  {key:"5d", label:"5일"},
+  {key:"1mo",label:"30일"},
+  {key:"1y", label:"1년"},
+  {key:"3y", label:"3년"},
+];
+let currentRange = "1d";
+let DATA = null;
+
+// data.json은 대시보드와 같은 위치(GitHub Pages)에서 로드 → CORS 없음
+const DATA_URL = "data.json";
+
+const ratingKo = r => ({
+  "extreme fear":"극단적 공포","fear":"공포","neutral":"중립",
+  "greed":"탐욕","extreme greed":"극단적 탐욕"
+}[r] || r || "");
+
+const colorForFG = v =>
+  v<25?"#e0556b":v<45?"#e0a845":v<55?"#d8d845":v<75?"#8fc945":"#3fd07a";
+
+function fmtNum(n, dec){
+  if(n==null||isNaN(n)) return "—";
+  return Number(n).toLocaleString("en-US",{minimumFractionDigits:dec,maximumFractionDigits:dec});
+}
+function fmtDate(ms, range){
+  const d = new Date(ms);
+  if(range==="1d"||range==="5d")
+    return d.toLocaleString("ko-KR",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});
+  return d.toLocaleDateString("ko-KR",{year:"2-digit",month:"numeric",day:"numeric"});
+}
+
+// ---------- 스파크라인 + 호버 ----------
+function buildChart(container, series, color, dec, range, valSuffix=""){
+  container.innerHTML = "";
+  if(!series || series.length < 2){
+    const e=document.createElement("div"); e.className="err"; e.textContent="차트 데이터 없음";
+    container.appendChild(e); return;
+  }
+  const W=300, H=100, pad=4;
+  const xs=series.map(p=>p[0]), ys=series.map(p=>p[1]);
+  const minY=Math.min(...ys), maxY=Math.max(...ys), rngY=(maxY-minY)||1;
+  const minX=xs[0], maxX=xs[xs.length-1], rngX=(maxX-minX)||1;
+  const X = t => pad + ((t-minX)/rngX)*(W-2*pad);
+  const Y = v => pad + (1-(v-minY)/rngY)*(H-2*pad);
+
+  const path = series.map((p,i)=>(i?"L":"M")+X(p[0]).toFixed(2)+" "+Y(p[1]).toFixed(2)).join(" ");
+  const area = path + ` L${(W-pad).toFixed(2)} ${H-pad} L${pad} ${H-pad} Z`;
+  const gid = "g"+Math.random().toString(36).slice(2,8);
+
+  const svg = document.createElementNS("http://www.w3.org/2000/svg","svg");
+  svg.setAttribute("class","chart");
+  svg.setAttribute("viewBox",`0 0 ${W} ${H}`);
+  svg.setAttribute("preserveAspectRatio","none");
+  svg.innerHTML = `
+    <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="${color}" stop-opacity="0.28"/>
+      <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
+    </linearGradient></defs>
+    <path d="${area}" fill="url(#${gid})"/>
+    <path d="${path}" fill="none" stroke="${color}" stroke-width="1.7"
+          vector-effect="non-scaling-stroke"/>
+    <line class="hoverline" x1="0" y1="${pad}" x2="0" y2="${H-pad}"/>
+    <circle class="hoverdot" r="3.5" stroke="${color}"/>`;
+  container.appendChild(svg);
+
+  const tip = document.createElement("div");
+  tip.className="tip";
+  tip.innerHTML=`<div class="tv"></div><div class="td"></div>`;
+  container.appendChild(tip);
+
+  const hline = svg.querySelector(".hoverline");
+  const hdot  = svg.querySelector(".hoverdot");
+  const tipV  = tip.querySelector(".tv");
+  const tipD  = tip.querySelector(".td");
+
+  function onMove(ev){
+    const rect = container.getBoundingClientRect();
+    const px = (ev.touches?ev.touches[0].clientX:ev.clientX) - rect.left;
+    const ratio = Math.max(0, Math.min(1, px/rect.width));
+    const tx = minX + ratio*rngX;
+    // 가장 가까운 포인트
+    let lo=0, hi=series.length-1;
+    while(hi-lo>1){const mid=(lo+hi)>>1; if(series[mid][0]<tx) lo=mid; else hi=mid;}
+    const idx = (Math.abs(series[lo][0]-tx) <= Math.abs(series[hi][0]-tx)) ? lo : hi;
+    const [t,v] = series[idx];
+    const cx = X(t), cy = Y(v);
+    hline.setAttribute("x1",cx); hline.setAttribute("x2",cx); hline.style.opacity=1;
+    hdot.setAttribute("cx",cx); hdot.setAttribute("cy",cy); hdot.style.opacity=1;
+    // 픽셀 좌표 (컨테이너 기준)
+    const pxX = (cx/W)*rect.width;
+    const pxY = (cy/H)*rect.height;
+    tip.style.left = pxX+"px";
+    tip.style.top  = pxY+"px";
+    tip.style.opacity = 1;
+    tipV.textContent = fmtNum(v, dec)+valSuffix;
+    tipV.style.color = color;
+    tipD.textContent = fmtDate(t, range);
+  }
+  function onLeave(){
+    hline.style.opacity=0; hdot.style.opacity=0; tip.style.opacity=0;
+  }
+  container.addEventListener("mousemove", onMove);
+  container.addEventListener("mouseleave", onLeave);
+  container.addEventListener("touchmove", onMove, {passive:true});
+  container.addEventListener("touchend", onLeave);
+}
+
+// ---------- 카드 렌더 ----------
+function renderCard(card){
+  const el = document.createElement("div");
+  el.className="card";
+  el.innerHTML = `
+    <div class="label">${card.label}</div>
+    <div class="body">
+      <div class="price-row">
+        <span class="val" data-role="val">—</span>
+        <span class="chg" data-role="chg"></span>
+      </div>
+      <div class="meta" data-role="meta"></div>
+      <div class="chart-wrap" data-role="chart"></div>
+    </div>`;
+  updateCard(el, card);
+  return el;
+}
+
+function updateCard(el, card){
+  const p = card.periods[currentRange] || {};
+  const dec = card.decimals;
+  const valEl = el.querySelector('[data-role=val]');
+  const chgEl = el.querySelector('[data-role=chg]');
+  const metaEl= el.querySelector('[data-role=meta]');
+  const chart = el.querySelector('[data-role=chart]');
+
+  if(p.price==null){
+    valEl.textContent="—"; chgEl.textContent="";
+    metaEl.textContent="데이터 없음";
+    chart.innerHTML='<div class="err">데이터 없음</div>';
+    return;
+  }
+  const series = p.series||[];
+  const price = p.price;
+  // 등락 기준: 1일=전일종가, 그 외=구간 첫 종가
+  const base = (currentRange==="1d")
+    ? (p.prevClose ?? (series.length?series[0][1]:price))
+    : (series.length?series[0][1]:price);
+  const up = price>=base;
+  const col = up?"var(--up)":"var(--down)";
+  const colHex = up?"#3fd07a":"#f0556b";
+  const diff = price-base;
+  const pct = base? diff/base*100 : 0;
+
+  valEl.textContent = fmtNum(price, dec);
+  chgEl.style.color = col;
+  chgEl.textContent = `${up?"+":""}${pct.toFixed(2)}% (${up?"+":""}${fmtNum(diff,dec)})`;
+  metaEl.textContent = RANGES.find(r=>r.key===currentRange).label+" 기준";
+  buildChart(chart, series, colHex, dec, currentRange);
+}
+
+// ---------- Fear & Greed 카드 ----------
+function renderFG(){
+  const el = document.createElement("div");
+  el.className="card";
+  el.innerHTML = `<div class="label">CNN Fear &amp; Greed Index</div>
+    <div class="fg-body" data-role="fgbody"></div>`;
+  updateFG(el);
+  return el;
+}
+function updateFG(el){
+  const fg = DATA.fearGreed||{};
+  const body = el.querySelector('[data-role=fgbody]');
+  if(fg.error || fg.score==null){
+    body.innerHTML='<div class="err">F&G 데이터 일시 실패</div>';
+    return;
+  }
+  const score = Math.round(fg.score);
+  const colHex = colorForFG(score);
+
+  if(currentRange==="1d"){
+    // 숫자 게이지 + 히스토리 요약
+    const row=(l,v)=>v==null?"":`<span>${l} <b style="color:${colorForFG(v)}">${Math.round(v)}</b></span>`;
+    body.innerHTML = `
+      <div class="fg-num">
+        <div class="fg-score" style="color:${colHex}">${score}</div>
+        <div class="fg-rating" style="color:${colHex}">${ratingKo(fg.rating)}</div>
+        <div class="fg-bar"><div class="pin" style="left:${score}%"></div></div>
+        <div class="fg-hist">
+          ${row("전일",fg.previous_close)}${row("1주",fg.previous_1_week)}
+          ${row("1개월",fg.previous_1_month)}${row("1년",fg.previous_1_year)}
+        </div>
+      </div>`;
+  } else {
+    // 그래프 (기간만큼 자르기)
+    const now = Date.now();
+    const spanMs = {"5d":5,"1mo":30,"1y":365,"3y":365*3}[currentRange]*86400000;
+    const cutoff = now - spanMs;
+    let series = (fg.series||[]).filter(p=>p[0]>=cutoff);
+    if(series.length<2) series = fg.series||[];
+    body.innerHTML = `
+      <div class="price-row">
+        <span class="val" style="color:${colHex}">${score}</span>
+        <span class="chg" style="color:${colHex};font-weight:700">${ratingKo(fg.rating)}</span>
+      </div>
+      <div class="meta">${RANGES.find(r=>r.key===currentRange).label} 추이 (0=공포·100=탐욕)</div>
+      <div class="chart-wrap" data-role="fgchart"></div>`;
+    buildChart(el.querySelector('[data-role=fgchart]'), series, colHex, 0, currentRange);
+  }
+}
+
+// ---------- 전체 렌더 ----------
+function renderAll(){
+  const grid = document.getElementById("grid");
+  grid.innerHTML="";
+  // F&G를 맨 앞에
+  grid.appendChild(renderFG());
+  DATA.cards.forEach(c => grid.appendChild(renderCard(c)));
+
+  const u = new Date(DATA.updatedAt);
+  document.getElementById("updated").innerHTML =
+    `데이터 시각: <b>${u.toLocaleString("ko-KR")}</b>`;
+}
+
+// ---------- 데이터 로드 ----------
+async function loadData(){
+  const btn = document.getElementById("resetBtn");
+  btn.classList.add("loading"); btn.disabled=true;
+  try{
+    const r = await fetch(DATA_URL+"?t="+Date.now(), {cache:"no-store"});
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    DATA = await r.json();
+    renderAll();
+  }catch(e){
+    document.getElementById("grid").innerHTML =
+      `<div class="err">data.json 로드 실패: ${e.message}<br>
+       GitHub Actions가 한 번 이상 실행되어 data.json이 생성됐는지 확인하세요.</div>`;
+  }finally{
+    btn.classList.remove("loading"); btn.disabled=false;
+  }
+}
+
+// ---------- 기간 버튼 ----------
+const rangesEl = document.getElementById("ranges");
+RANGES.forEach(rg=>{
+  const b=document.createElement("button");
+  b.textContent=rg.label;
+  if(rg.key===currentRange) b.classList.add("active");
+  b.onclick=()=>{
+    if(rg.key===currentRange) return;
+    currentRange=rg.key;
+    [...rangesEl.children].forEach(c=>c.classList.toggle("active",c===b));
+    if(DATA) renderAll();   // 재요청 없이 이미 받은 데이터로 다시 그림
+  };
+  rangesEl.appendChild(b);
+});
+
+// 리셋(새로고침) 버튼 — 누를 때만 data.json 재요청
+document.getElementById("resetBtn").onclick = loadData;
+
+// 최초 1회 로드 (이후 자동 갱신 없음)
+loadData();
+</script>
+</body>
+</html>
