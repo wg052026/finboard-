@@ -36,6 +36,9 @@ def row_html(label, price, base, dec, diff_mode=None):
     elif diff_mode == "pp":
         diff = price - base
         chg = f'{"+" if up else ""}{fmt(diff, 2)}%p'
+    elif diff_mode == "delta":
+        diff = price - base
+        chg = f'전월比 {"+" if up else ""}{fmt(diff, dec)}'
     elif base:
         diff = price - base
         pct = diff / base * 100
@@ -68,12 +71,14 @@ def build_email(data):
         dec = c["decimals"] if c.get("diffMode") == "pp" else 0
         body_rows += row_html(c["label"], price, base, dec, c.get("diffMode"))
 
-    # 경제지표 (3페이지)
+    # 경제지표 (3페이지) — 라벨에 기준월 표기
     econ_rows = ""
     for c in data.get("econCards", []):
         p = c["periods"].get("1d", {})
         dec = c["decimals"] if c.get("diffMode") == "pp" else 0
-        econ_rows += row_html(c["label"], p.get("price"),
+        asof = c.get("asof")
+        lbl = c["label"] + (f' <span style="color:#aaa;font-size:11px">({asof})</span>' if asof else "")
+        econ_rows += row_html(lbl, p.get("price"),
                               p.get("prevClose"), dec, c.get("diffMode"))
 
     # Fear & Greed

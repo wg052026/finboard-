@@ -159,57 +159,218 @@ def fetch_bls_series(series_id, start_year, end_year):
     return out
 
 
-def build_cpi_card():
-    """미국 CPI(전체, 계절조정) 지수와 전년동월 대비(YoY) 상승률 카드."""
+def fetch_bls_multi(series_ids, start_year, end_year):
+    """여러 BLS 시리즈를 한 번에 요청. 반환: {series_id: [[ms,val],...]}"""
+    body = json.dumps({
+        "seriesid": series_ids,
+        "startyear": str(start_year),
+        "endyear": str(end_year),
+    }).encode()
+    headers = {**YH_HEADERS, "Content-Type": "application/json"}
+    last_err = None
+    for attempt in range(4):
+        try:
+            req = urllib.request.Request(
+                "https://api.bls.gov/publicAPI/v2/timeseries/data/",
+                data=body, headers=headers)
+            raw = urllib.request.urlopen(req, timeout=40, context=CTX).read()
+            d = json.loads(raw)
+            if d.get("status") == "REQUEST_SUCCEEDED":
+                break
+            last_err = str(d.get("status")) + " " + " ".join(d.get("message", []))[:80]
+        except Exception as e:
+            last_err = str(e)[:80]
+        time.sleep(5 * (attempt + 1))
+    else:
+        raise RuntimeError("BLS: " + (last_err or "unknown"))
+    result = {}
+    for ser in d["Results"]["series"]:
+        out = []
+        for row in ser["data"]:
+            if not row["period"].startswith("M"):
+                continue
+            val = (row.get("value") or "").strip()
+            if not val or val in ("-", "."):
+                continue
+            try:
+                fval = float(val)
+            except ValueError:
+                continue
+            month = int(row["period"][1:])
+            ms = int(datetime.datetime(int(row["year"]), month, 1,
+                                       tzinfo=datetime.timezone.utc).timestamp() * 1000)
+            out.append([ms, fval])
+        out.sort(key=lambda x: x[0])
+        result[ser["seriesID"]] = out
+    return result
+
+
+def fetch_bls_series(series_id, start_year, end_year):
+    """단일 시리즈 (하위호환)."""
+    return fetch_bls_multi([series_id], start_year, end_year).get(series_id, [])
+
+
+def _yoy(series):
+    """월별 지수 시계열 → 전년동월 대비 % 시계열."""
+    idx = {ms: v for ms, v in series}
+    out = []
+    for ms, v in series:
+        dt = datetime.datetime.fromtimestamp(ms / 1000, datetime.timezone.utc)
+        try:
+            prev_ms = int(dt.replace(year=dt.year - 1).timestamp() * 1000)
+        except ValueError:
+            continue
+        if prev_ms in idx and idx[prev_ms]:
+            out.append([ms, round((v / idx[prev_ms] - 1) * 100, 2)])
+    return out
+
+
+def _mom_change(series):
+    """월별 레벨 시계열 → 전월 대비 증감 시계열 (절대 변화량)."""
+    out = []
+    for i in range(1, len(series)):
+        out.append([series[i][0], round(series[i][1] - series[i-1][1], 1)])
+    return out
+
+
+def _cut(series, n):
+    return series[-n:] if len(series) > n else series[:]
+
+
+def _econ_periods(series, last_price, prev_base):
+    """경제지표는 월별이라 기간 구간을 길이로 근사."""
+    periods = {}
+    for key, n in [("1d", 13), ("5d", 13), ("1mo", 13), ("1y", 13), ("3y", 37)]:
+        s = _cut(series, n)
+        periods[key] = {"price": last_price, "prevClose": prev_base, "series": s}
+    return periods
+
+
+def build_econ_cards():
+    """3페이지 경제지표 카드들을 생성한다.
+    CPI·근원CPI: 전년比 %(pp) / 실업률·PPI(전년比): %(pp) /
+    비농업고용: 전월대비 증감(천명) / 기준금리(EFFR): %(pp)."""
     this_year = datetime.datetime.now(datetime.timezone.utc).year
+    cards = []
+
+    # ---- BLS 묶음 요청 ----
+    SID = {
+        "cpi":   "CUSR0000SA0",      # CPI-U all items, SA
+        "core":  "CUSR0000SA0L1E",   # Core CPI, SA
+        "unemp": "LNS14000000",      # 실업률 U-3, SA
+        "nfp":   "CES0000000001",    # 비농업 총고용(천명), SA
+        "ppi":   "WPSFD4",           # PPI 최종수요
+    }
     try:
-        # CUSR0000SA0 = CPI-U, all items, 계절조정
-        series_idx = fetch_bls_series("CUSR0000SA0", this_year - 4, this_year)
-        if len(series_idx) < 2:
-            return None
-
-        # YoY 상승률 시계열 계산 (12개월 전 대비 %)
-        idx_map = {ms: v for ms, v in series_idx}
-        yoy = []
-        for ms, v in series_idx:
-            dt = datetime.datetime.fromtimestamp(ms / 1000, datetime.timezone.utc)
-            prev_dt = dt.replace(year=dt.year - 1)
-            prev_ms = int(prev_dt.timestamp() * 1000)
-            if prev_ms in idx_map and idx_map[prev_ms]:
-                yoy.append([ms, round((v / idx_map[prev_ms] - 1) * 100, 2)])
-
-        if len(yoy) < 2:
-            return None
-
-        last_yoy = yoy[-1][1]
-        prev_yoy = yoy[-2][1] if len(yoy) >= 2 else None
-
-        # 기간별로는 동일한 월별 데이터를 길이만 잘라서 제공
-        def cut(series, months):
-            return series[-months:] if len(series) > months else series
-        periods = {}
-        for key, n in [("1d", 13), ("5d", 13), ("1mo", 13),
-                       ("1y", 13), ("3y", 37)]:
-            s = cut(yoy, n)
-            periods[key] = {
-                "price": last_yoy,
-                "prevClose": prev_yoy,
-                "series": s,
-            }
-        return {
-            "id": "cpi_yoy",
-            "label": "미국 CPI (전년比 %)",
-            "symbol": "CPI YoY",
-            "decimals": 2,
-            "diffMode": "pp",
-            "periods": periods,
-        }
+        bls = fetch_bls_multi(list(SID.values()), this_year - 4, this_year)
     except Exception as e:
-        return {"id": "cpi_yoy", "label": "미국 CPI (전년比 %)",
-                "symbol": "CPI YoY", "decimals": 2, "diffMode": "pp",
-                "periods": {k: {"price": None, "prevClose": None,
-                                "series": [], "error": str(e)[:80]}
-                            for k in RANGES}}
+        bls = {}
+        print("  ! BLS fail:", str(e)[:80])
+
+    def add_yoy_card(cid, label, sid, note):
+        s = bls.get(sid, [])
+        yoy = _yoy(s)
+        if len(yoy) >= 2:
+            cards.append({
+                "id": cid, "label": label, "symbol": label, "decimals": 2,
+                "diffMode": "pp", "note": note,
+                "asof": _month_label(yoy[-1][0]),
+                "periods": _econ_periods(yoy, yoy[-1][1], yoy[-2][1]),
+            })
+
+    def add_level_card(cid, label, sid, note, dec=1, suffix=""):
+        s = bls.get(sid, [])
+        if len(s) >= 2:
+            cards.append({
+                "id": cid, "label": label, "symbol": label, "decimals": dec,
+                "diffMode": "pp", "note": note, "unit": suffix,
+                "asof": _month_label(s[-1][0]),
+                "periods": _econ_periods(s, s[-1][1], s[-2][1]),
+            })
+
+    # CPI (전년比)
+    add_yoy_card("cpi_yoy", "미국 CPI (전년比 %)", SID["cpi"],
+                 "매월 중순 발표 · 전월 기준")
+    # 근원 CPI (전년比)
+    add_yoy_card("core_cpi", "근원 CPI (전년比 %)", SID["core"],
+                 "매월 중순 발표 · 전월 기준 · 식품·에너지 제외")
+    # 실업률 (레벨 %)
+    add_level_card("unemp", "미국 실업률 (%)", SID["unemp"],
+                   "매월 초 발표 (첫 금요일) · 전월 기준", dec=1)
+    # 비농업 고용 (전월대비 증감, 천명)
+    s_nfp = bls.get(SID["nfp"], [])
+    nfp_chg = _mom_change(s_nfp)
+    if len(nfp_chg) >= 2:
+        cards.append({
+            "id": "nfp", "label": "비농업 신규고용 (천명)", "symbol": "NFP", "decimals": 0,
+            "diffMode": "delta", "note": "매월 초 발표 (첫 금요일) · 전월 대비 증감",
+            "asof": _month_label(nfp_chg[-1][0]),
+            "periods": _econ_periods(nfp_chg, nfp_chg[-1][1], nfp_chg[-2][1]),
+        })
+    # PPI (전년比)
+    add_yoy_card("ppi_yoy", "생산자물가 PPI (전년比 %)", SID["ppi"],
+                 "매월 중순 발표 · 전월 기준 · CPI 선행지표")
+
+    # ---- 기준금리 EFFR (뉴욕연준) ----
+    try:
+        effr = fetch_effr()
+        if effr and len(effr) >= 2:
+            cards.append({
+                "id": "effr", "label": "미국 기준금리 EFFR (%)", "symbol": "EFFR",
+                "decimals": 2, "diffMode": "pp",
+                "note": "FOMC 회의 후 변경 (연 8회) · 실효 연방기금금리",
+                "asof": _day_label(effr[-1][0]),
+                "periods": _effr_periods(effr),
+            })
+    except Exception as e:
+        print("  ! EFFR fail:", str(e)[:80])
+
+    return cards
+
+
+def _month_label(ms):
+    dt = datetime.datetime.fromtimestamp(ms / 1000, datetime.timezone.utc)
+    return f"{dt.year}년 {dt.month}월"
+
+
+def _day_label(ms):
+    dt = datetime.datetime.fromtimestamp(ms / 1000, datetime.timezone.utc)
+    return f"{dt.year}-{dt.month:02d}-{dt.day:02d}"
+
+
+def fetch_effr():
+    """뉴욕연준 실효 연방기금금리(EFFR) 일별 시계열 [[ms,val],...] (최근 약 3년)."""
+    import datetime as _dt
+    end = _dt.date.today()
+    start = end.replace(year=end.year - 3)
+    url = ("https://markets.newyorkfed.org/api/rates/unsecured/effr/search.json"
+           f"?startDate={start:%Y-%m-%d}&endDate={end:%Y-%m-%d}&type=rate")
+    raw = http_get(url, {"User-Agent": YH_HEADERS["User-Agent"]})
+    d = json.loads(raw)
+    out = []
+    for r in d.get("refRates", []):
+        try:
+            ds = r["effectiveDate"]; v = float(r["percentRate"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        ms = int(_dt.datetime.strptime(ds, "%Y-%m-%d")
+                 .replace(tzinfo=_dt.timezone.utc).timestamp() * 1000)
+        out.append([ms, v])
+    out.sort(key=lambda x: x[0])
+    return out
+
+
+def _effr_periods(series):
+    """EFFR은 일별이라 기간별로 잘라서 제공."""
+    span = {"1d": 2, "5d": 6, "1mo": 22, "1y": 252, "3y": len(series)}
+    periods = {}
+    for key, n in span.items():
+        s = _cut(series, n)
+        price = s[-1][1] if s else None
+        prev = s[-2][1] if len(s) >= 2 else None
+        base = prev if key == "1d" else (s[0][1] if s else None)
+        periods[key] = {"price": price, "prevClose": base, "series": s}
+    return periods
 
 
 def fetch_treasury_yields():
@@ -341,10 +502,7 @@ def main():
         cards[pos:pos] = yield_cards
 
     # 3페이지(경제지표) 카드들
-    econ_cards = []
-    cpi = build_cpi_card()
-    if cpi:
-        econ_cards.append(cpi)
+    econ_cards = build_econ_cards()
 
     fng = fetch_fng()
     out = {
