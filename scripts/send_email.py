@@ -127,7 +127,8 @@ def main():
     to = [a.strip() for a in os.environ["MAIL_TO"].split(",") if a.strip()]
 
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"📊 금융 대시보드 요약 ({upstr})"
+    prefix = "[테스트] " if os.environ.get("IS_TEST") == "true" else ""
+    msg["Subject"] = f"{prefix}📊 금융 대시보드 요약 ({upstr})"
     msg["From"] = user
     msg["To"] = ", ".join(to)
     msg.attach(MIMEText(html, "html", "utf-8"))
