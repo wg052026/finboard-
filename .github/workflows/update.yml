@@ -57,3 +57,16 @@ jobs:
           MAIL_TO:   ${{ secrets.MAIL_TO }}
           IS_TEST:   ${{ github.event.inputs.send_test_email }}
         run: python scripts/send_email.py
+
+      - name: 발송 기록 커밋 (중복 방지용)
+        if: github.event_name == 'repository_dispatch' || github.event.schedule == '10 3 * * *'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add last_email.txt 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "발송 기록 변경 없음"
+          else
+            git commit -m "메일 발송 기록: $(date -u +'%Y-%m-%d %H:%M UTC')"
+            git push
+          fi
