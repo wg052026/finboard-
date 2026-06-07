@@ -134,6 +134,21 @@ def main():
         data = json.load(f)
     html, upstr = build_email(data)
 
+    is_test = os.environ.get("IS_TEST") == "true"
+
+    # 하루 1회 중복 방지 (KST 기준 오늘 날짜). 테스트 메일은 검사 생략.
+    kst_today = (datetime.datetime.now(datetime.timezone.utc)
+                 + datetime.timedelta(hours=9)).strftime("%Y-%m-%d")
+    STAMP = "last_email.txt"
+    if not is_test:
+        try:
+            with open(STAMP, encoding="utf-8") as f:
+                if f.read().strip() == kst_today:
+                    print(f"[email] 오늘({kst_today}) 이미 발송됨 → 건너뜀")
+                    return
+        except FileNotFoundError:
+            pass
+
     host = (os.environ.get("SMTP_HOST") or "").strip()
     port_raw = (os.environ.get("SMTP_PORT") or "").strip()
     user = (os.environ.get("SMTP_USER") or "").strip()
@@ -153,7 +168,7 @@ def main():
     port = int(port_raw) if port_raw.isdigit() else 587  # 비어 있으면 587(STARTTLS)
 
     msg = MIMEMultipart("alternative")
-    prefix = "[테스트] " if os.environ.get("IS_TEST") == "true" else ""
+    prefix = "[테스트] " if is_test else ""
     msg["Subject"] = f"{prefix}📊 금융 대시보드 요약 ({upstr})"
     msg["From"] = user
     msg["To"] = ", ".join(to)
@@ -170,6 +185,11 @@ def main():
             s.login(user, pwd)
             s.sendmail(user, to, msg.as_string())
     print(f"[email] sent to {to}")
+
+    # 발송 기록 남기기 (테스트 메일은 기록하지 않음 → 정식 발송을 막지 않도록)
+    if not is_test:
+        with open(STAMP, "w", encoding="utf-8") as f:
+            f.write(kst_today)
 
 
 if __name__ == "__main__":
