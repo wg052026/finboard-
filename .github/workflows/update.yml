@@ -3,10 +3,13 @@ name: 금융 대시보드 업데이트
 on:
   schedule:
     # UTC 기준. KST = UTC+9.
-    # 평일 데이터 갱신: 매시간 정각 (원하면 조정)
+    # 데이터 갱신: 매시간 정각
     - cron: "0 * * * *"
-    # 매일 메일 발송: UTC 03:00 = KST 12:00 (정오)
-    - cron: "0 3 * * *"
+    # 백업용 메일 발송: UTC 03:10 = KST 12:10 (외부 트리거 실패 시 대비)
+    - cron: "10 3 * * *"
+  repository_dispatch:
+    # 외부 스케줄러(cron-job.org)가 깨우는 트리거. event_type: send_email
+    types: [send_email]
   workflow_dispatch:   # 수동 실행 버튼
     inputs:
       send_test_email:
@@ -45,7 +48,7 @@ jobs:
           fi
 
       - name: 메일 발송 (정오 스케줄 또는 테스트 체크 시)
-        if: github.event.schedule == '0 3 * * *' || github.event.inputs.send_test_email == 'true'
+        if: github.event_name == 'repository_dispatch' || github.event.schedule == '10 3 * * *' || github.event.inputs.send_test_email == 'true'
         env:
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
