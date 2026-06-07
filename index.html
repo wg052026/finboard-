@@ -7,6 +7,8 @@ on:
     - cron: "0 * * * *"
     # 매일 메일 발송: UTC 03:10 = KST 12:10 (정시 누락 회피용으로 10분 늦춤)
     - cron: "10 3 * * *"
+    # [임시 테스트] UTC 08:53 = KST 17:53 — 확인 후 삭제 예정
+    - cron: "53 8 * * *"
   workflow_dispatch:   # 수동 실행 버튼
     inputs:
       send_test_email:
@@ -45,7 +47,7 @@ jobs:
           fi
 
       - name: 메일 발송 (정오 스케줄 또는 테스트 체크 시)
-        if: github.event.schedule == '10 3 * * *' || github.event.inputs.send_test_email == 'true'
+        if: github.event.schedule == '10 3 * * *' || github.event.schedule == '53 8 * * *' || github.event.inputs.send_test_email == 'true'
         env:
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
