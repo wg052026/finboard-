@@ -1,58 +1,536 @@
-name: 금융 대시보드 업데이트
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>실시간 금융 대시보드</title>
+<style>
+  :root{
+    --bg:#0c0d12; --card:#15161d; --line:#262833; --line2:#333646;
+    --txt:#e8e9ef; --dim:#8a8d9c; --faint:#5f6273;
+    --up:#3fd07a; --down:#f0556b; --accent:#3a63b0; --accent2:#2a4d8f;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{
+    background:
+      radial-gradient(1200px 600px at 80% -10%, #16182400, #0c0d12 60%),
+      var(--bg);
+    color:var(--txt);
+    font-family:-apple-system,"Segoe UI","Malgun Gothic",sans-serif;
+    padding:14px;
+    -webkit-font-smoothing:antialiased;
+  }
+  .topbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:6px;}
+  h1{font-size:17px;font-weight:700;letter-spacing:-.2px;}
+  .updated{font-size:11px;color:var(--faint);}
+  .updated b{color:var(--dim);font-weight:600;}
+  .controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0 14px;}
+  .ranges{display:flex;gap:6px;flex-wrap:wrap;}
+  .ranges button{
+    background:var(--card);color:var(--dim);border:1px solid var(--line);
+    border-radius:8px;padding:7px 15px;font-size:12.5px;font-weight:600;
+    cursor:pointer;transition:.14s;
+  }
+  .ranges button:hover{border-color:var(--line2);color:var(--txt);}
+  .ranges button.active{background:var(--accent2);border-color:var(--accent);color:#fff;}
+  .reset{
+    margin-left:auto;background:var(--card);color:var(--dim);
+    border:1px solid var(--line);border-radius:8px;padding:7px 16px;
+    font-size:12.5px;font-weight:600;cursor:pointer;transition:.14s;
+    display:inline-flex;align-items:center;gap:7px;
+  }
+  .reset:hover{border-color:var(--up);color:var(--up);}
+  .reset:disabled{opacity:.5;cursor:default;}
+  .reset .spin{width:12px;height:12px;border:2px solid var(--faint);
+    border-top-color:var(--up);border-radius:50%;display:none;animation:sp .7s linear infinite;}
+  .reset.loading .spin{display:inline-block;}
+  @keyframes sp{to{transform:rotate(360deg);}}
 
-on:
-  schedule:
-    # UTC 기준. KST = UTC+9.
-    # 평일 데이터 갱신: 매시간 정각 (원하면 조정)
-    - cron: "0 * * * *"
-    # 매일 메일 발송: UTC 03:10 = KST 12:10 (정시 누락 회피용으로 10분 늦춤)
-    - cron: "10 3 * * *"
-    # [임시 테스트] UTC 09:29 = KST 18:29 — 확인 후 삭제 예정
-    - cron: "29 9 * * *"
-  workflow_dispatch:   # 수동 실행 버튼
-    inputs:
-      send_test_email:
-        description: "테스트 메일 보내기 (체크하면 즉시 발송)"
-        type: boolean
-        default: false
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:11px;}
+  .card{
+    background:linear-gradient(180deg,#171821,#13141b);
+    border:1px solid var(--line);border-radius:12px;overflow:hidden;
+    display:flex;flex-direction:column;min-height:215px;
+  }
+  .card .label{font-size:12.5px;font-weight:600;padding:11px 13px 9px;color:#cdd0dc;}
+  .card .body{flex:1;display:flex;flex-direction:column;padding:0 13px 12px;min-height:0;}
+  .price-row{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;}
+  .val{font-size:27px;font-weight:700;letter-spacing:-.5px;}
+  .chg{font-size:13px;font-weight:600;}
+  .meta{font-size:10px;color:var(--faint);margin-top:2px;}
+  .chart-wrap{flex:1;position:relative;margin-top:8px;min-height:70px;}
+  svg.chart{width:100%;height:100%;display:block;overflow:visible;}
+  .hoverline{stroke:var(--faint);stroke-width:1;stroke-dasharray:3 3;opacity:0;}
+  .hoverdot{fill:#fff;stroke-width:2;opacity:0;}
+  .tip{
+    position:absolute;pointer-events:none;opacity:0;transform:translate(-50%,-115%);
+    background:#0c0d12ee;border:1px solid var(--line2);border-radius:7px;
+    padding:5px 9px;font-size:11px;white-space:nowrap;z-index:5;transition:opacity .08s;
+  }
+  .tip .tv{font-weight:700;font-size:12.5px;}
+  .tip .td{color:var(--dim);font-size:10px;margin-top:1px;}
+  .err{font-size:11px;color:#d68;padding:10px 0;}
 
-permissions:
-  contents: write
+  /* Fear & Greed */
+  .fg-body{flex:1;display:flex;flex-direction:column;padding:0 13px 12px;min-height:0;}
+  .fg-num{display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;gap:5px;}
+  .fg-score{font-size:50px;font-weight:800;line-height:1;}
+  .fg-rating{font-size:14px;font-weight:700;}
+  .fg-bar{width:92%;height:8px;border-radius:5px;margin-top:5px;position:relative;
+    background:linear-gradient(90deg,#e0556b,#e0a845,#d8d845,#8fc945,#3fd07a);}
+  .fg-bar .pin{position:absolute;top:-3px;width:3px;height:14px;background:#fff;border-radius:2px;transform:translateX(-50%);}
+  .fg-hist{display:flex;gap:9px;flex-wrap:wrap;justify-content:center;font-size:10px;color:var(--dim);margin-top:3px;}
+  .fg-hist b{font-weight:700;}
+  .loading-skel{color:var(--faint);font-size:12px;padding:18px 0;text-align:center;}
 
-jobs:
-  update:
-    runs-on: ubuntu-latest
-    steps:
-      - name: 체크아웃
-        uses: actions/checkout@v4
+  /* 페이지 탭 */
+  .pages{display:flex;gap:4px;margin:4px 0 14px;border-bottom:1px solid var(--line);}
+  .pages button{
+    background:none;border:none;border-bottom:2px solid transparent;
+    color:var(--dim);font-size:14px;font-weight:600;padding:9px 16px;cursor:pointer;
+    transition:.14s;margin-bottom:-1px;
+  }
+  .pages button:hover{color:var(--txt);}
+  .pages button.active{color:#fff;border-bottom-color:var(--accent);}
 
-      - name: 파이썬 설정
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+  /* 1페이지 숫자 전용 뷰 */
+  .numgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:9px;}
+  .numcard{
+    background:linear-gradient(180deg,#171821,#13141b);
+    border:1px solid var(--line);border-radius:10px;padding:13px 15px;
+  }
+  .numcard .nlabel{font-size:12px;color:var(--dim);margin-bottom:6px;}
+  .numcard .nval{font-size:25px;font-weight:700;letter-spacing:-.5px;}
+  .numcard .nchg{font-size:13px;font-weight:600;margin-top:3px;}
+  .hidden{display:none;}
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>📊 실시간 금융 대시보드</h1>
+    <span class="updated" id="updated"></span>
+  </div>
 
-      - name: 데이터 수집
-        run: python scripts/fetch_data.py
+  <div class="pages" id="pages">
+    <button data-page="num" class="active">① 요약 (숫자)</button>
+    <button data-page="chart">② 상세 (차트)</button>
+    <button data-page="econ">③ 경제지표</button>
+  </div>
 
-      - name: data.json 커밋
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data.json
-          if git diff --cached --quiet; then
-            echo "변경 없음"
-          else
-            git commit -m "데이터 갱신: $(date -u +'%Y-%m-%d %H:%M UTC')"
-            git push
-          fi
+  <div class="controls">
+    <div class="ranges" id="ranges"></div>
+    <button class="reset" id="resetBtn">
+      <span class="spin"></span><span class="rtxt">↻ 새로고침</span>
+    </button>
+  </div>
 
-      - name: 메일 발송 (정오 스케줄 또는 테스트 체크 시)
-        if: github.event.schedule == '10 3 * * *' || github.event.schedule == '29 9 * * *' || github.event.inputs.send_test_email == 'true'
-        env:
-          SMTP_HOST: ${{ secrets.SMTP_HOST }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT }}
-          SMTP_USER: ${{ secrets.SMTP_USER }}
-          SMTP_PASS: ${{ secrets.SMTP_PASS }}
-          MAIL_TO:   ${{ secrets.MAIL_TO }}
-          IS_TEST:   ${{ github.event.inputs.send_test_email }}
-        run: python scripts/send_email.py
+  <div class="numgrid hidden" id="numgrid"></div>
+  <div class="grid" id="grid">
+    <div class="loading-skel">데이터 불러오는 중…</div>
+  </div>
+  <div class="grid hidden" id="econgrid"></div>
+
+<script>
+const RANGES = [
+  {key:"1d", label:"1일"},
+  {key:"5d", label:"5일"},
+  {key:"1mo",label:"30일"},
+  {key:"1y", label:"1년"},
+  {key:"3y", label:"3년"},
+];
+let currentRange = "1d";
+let DATA = null;
+
+// data.json은 대시보드와 같은 위치(GitHub Pages)에서 로드 → CORS 없음
+const DATA_URL = "data.json";
+
+const ratingKo = r => ({
+  "extreme fear":"극단적 공포","fear":"공포","neutral":"중립",
+  "greed":"탐욕","extreme greed":"극단적 탐욕"
+}[r] || r || "");
+
+const colorForFG = v =>
+  v<25?"#e0556b":v<45?"#e0a845":v<55?"#d8d845":v<75?"#8fc945":"#3fd07a";
+
+function fmtNum(n, dec){
+  if(n==null||isNaN(n)) return "—";
+  return Number(n).toLocaleString("en-US",{minimumFractionDigits:dec,maximumFractionDigits:dec});
+}
+function fmtDate(ms, range){
+  const d = new Date(ms);
+  if(range==="1d"||range==="5d")
+    return d.toLocaleString("ko-KR",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});
+  return d.toLocaleDateString("ko-KR",{year:"2-digit",month:"numeric",day:"numeric"});
+}
+
+// 색상 결정: colorMode에 따라 상승/하락의 색을 정한다.
+//  - "invert": 오르면 빨강, 내리면 녹색 (환율·금리·VIX·원유 등)
+//  - "negRed": 값이 음수면 빨강, 0 이상이면 녹색 (금리차)
+//  - 기본    : 오르면 녹색 (지수·금·고용 등)
+// 반환: {isPos: bool, hex, varColor}  (isPos=녹색이면 true)
+function decideColor(price, base, colorMode){
+  let green;
+  if(colorMode === "negRed"){
+    green = price >= 0;
+  } else {
+    const up = (base!=null) ? price >= base : true;
+    green = (colorMode === "invert") ? !up : up;
+  }
+  return {
+    green,
+    hex: green ? "#3fd07a" : "#f0556b",
+    varColor: green ? "var(--up)" : "var(--down)",
+  };
+}
+
+// ---------- 스파크라인 + 호버 ----------
+function buildChart(container, series, color, dec, range, valSuffix=""){
+  container.innerHTML = "";
+  if(!series || series.length < 2){
+    const e=document.createElement("div"); e.className="err"; e.textContent="차트 데이터 없음";
+    container.appendChild(e); return;
+  }
+  const W=300, H=100, pad=4;
+  const xs=series.map(p=>p[0]), ys=series.map(p=>p[1]);
+  const minY=Math.min(...ys), maxY=Math.max(...ys), rngY=(maxY-minY)||1;
+  const minX=xs[0], maxX=xs[xs.length-1], rngX=(maxX-minX)||1;
+  const X = t => pad + ((t-minX)/rngX)*(W-2*pad);
+  const Y = v => pad + (1-(v-minY)/rngY)*(H-2*pad);
+
+  const path = series.map((p,i)=>(i?"L":"M")+X(p[0]).toFixed(2)+" "+Y(p[1]).toFixed(2)).join(" ");
+  const area = path + ` L${(W-pad).toFixed(2)} ${H-pad} L${pad} ${H-pad} Z`;
+  const gid = "g"+Math.random().toString(36).slice(2,8);
+
+  const svg = document.createElementNS("http://www.w3.org/2000/svg","svg");
+  svg.setAttribute("class","chart");
+  svg.setAttribute("viewBox",`0 0 ${W} ${H}`);
+  svg.setAttribute("preserveAspectRatio","none");
+  svg.innerHTML = `
+    <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="${color}" stop-opacity="0.28"/>
+      <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
+    </linearGradient></defs>
+    <path d="${area}" fill="url(#${gid})"/>
+    <path d="${path}" fill="none" stroke="${color}" stroke-width="1.7"
+          vector-effect="non-scaling-stroke"/>
+    <line class="hoverline" x1="0" y1="${pad}" x2="0" y2="${H-pad}"/>
+    <circle class="hoverdot" r="3.5" stroke="${color}"/>`;
+  container.appendChild(svg);
+
+  const tip = document.createElement("div");
+  tip.className="tip";
+  tip.innerHTML=`<div class="tv"></div><div class="td"></div>`;
+  container.appendChild(tip);
+
+  const hline = svg.querySelector(".hoverline");
+  const hdot  = svg.querySelector(".hoverdot");
+  const tipV  = tip.querySelector(".tv");
+  const tipD  = tip.querySelector(".td");
+
+  function onMove(ev){
+    const rect = container.getBoundingClientRect();
+    const px = (ev.touches?ev.touches[0].clientX:ev.clientX) - rect.left;
+    const ratio = Math.max(0, Math.min(1, px/rect.width));
+    const tx = minX + ratio*rngX;
+    // 가장 가까운 포인트
+    let lo=0, hi=series.length-1;
+    while(hi-lo>1){const mid=(lo+hi)>>1; if(series[mid][0]<tx) lo=mid; else hi=mid;}
+    const idx = (Math.abs(series[lo][0]-tx) <= Math.abs(series[hi][0]-tx)) ? lo : hi;
+    const [t,v] = series[idx];
+    const cx = X(t), cy = Y(v);
+    hline.setAttribute("x1",cx); hline.setAttribute("x2",cx); hline.style.opacity=1;
+    hdot.setAttribute("cx",cx); hdot.setAttribute("cy",cy); hdot.style.opacity=1;
+    // 픽셀 좌표 (컨테이너 기준)
+    const pxX = (cx/W)*rect.width;
+    const pxY = (cy/H)*rect.height;
+    tip.style.left = pxX+"px";
+    tip.style.top  = pxY+"px";
+    tip.style.opacity = 1;
+    tipV.textContent = fmtNum(v, dec)+valSuffix;
+    tipV.style.color = color;
+    tipD.textContent = fmtDate(t, range);
+  }
+  function onLeave(){
+    hline.style.opacity=0; hdot.style.opacity=0; tip.style.opacity=0;
+  }
+  container.addEventListener("mousemove", onMove);
+  container.addEventListener("mouseleave", onLeave);
+  container.addEventListener("touchmove", onMove, {passive:true});
+  container.addEventListener("touchend", onLeave);
+}
+
+// ---------- 카드 렌더 ----------
+function renderCard(card){
+  const el = document.createElement("div");
+  el.className="card";
+  el.innerHTML = `
+    <div class="label">${card.label}</div>
+    <div class="body">
+      <div class="price-row">
+        <span class="val" data-role="val">—</span>
+        <span class="chg" data-role="chg"></span>
+      </div>
+      <div class="meta" data-role="meta"></div>
+      <div class="chart-wrap" data-role="chart"></div>
+    </div>`;
+  updateCard(el, card);
+  return el;
+}
+
+function updateCard(el, card){
+  const p = card.periods[currentRange] || {};
+  const dec = card.decimals;
+  const valEl = el.querySelector('[data-role=val]');
+  const chgEl = el.querySelector('[data-role=chg]');
+  const metaEl= el.querySelector('[data-role=meta]');
+  const chart = el.querySelector('[data-role=chart]');
+
+  if(p.price==null){
+    valEl.textContent="—"; chgEl.textContent="";
+    metaEl.textContent="데이터 없음";
+    chart.innerHTML='<div class="err">데이터 없음</div>';
+    return;
+  }
+  const series = p.series||[];
+  const price = p.price;
+  // 등락 기준: 1일=전일종가, 그 외=구간 첫 종가
+  const base = (currentRange==="1d")
+    ? (p.prevClose ?? (series.length?series[0][1]:price))
+    : (series.length?series[0][1]:price);
+  const up = price>=base;
+  const c = decideColor(price, base, card.colorMode);
+  const col = c.varColor;
+  const colHex = c.hex;
+  const diff = price-base;
+
+  valEl.textContent = fmtNum(price, dec);
+  chgEl.style.color = col;
+  if(card.diffMode === "pp"){
+    // 퍼센트포인트 차이로 표시 (CPI, 금리차 등)
+    chgEl.textContent = `${up?"+":""}${fmtNum(diff, 2)}%p`;
+  } else if(card.diffMode === "delta"){
+    // 절대 증감으로 표시 (비농업고용 등)
+    chgEl.textContent = `전월比 ${up?"+":""}${fmtNum(diff, dec)}`;
+  } else {
+    const pct = base? diff/base*100 : 0;
+    chgEl.textContent = `${up?"+":""}${pct.toFixed(2)}% (${up?"+":""}${fmtNum(diff,dec)})`;
+  }
+  // 경제지표는 발표 기준월과 발표 일정을 함께 표시
+  if(card.asof || card.note){
+    const parts = [];
+    if(card.asof) parts.push(`<b style="color:var(--dim)">${card.asof}</b> 기준`);
+    if(card.note) parts.push(card.note);
+    metaEl.innerHTML = parts.join(" · ");
+  } else {
+    metaEl.textContent = RANGES.find(r=>r.key===currentRange).label+" 기준";
+  }
+  buildChart(chart, series, colHex, dec, currentRange);
+}
+
+// ---------- Fear & Greed 카드 ----------
+function renderFG(){
+  const el = document.createElement("div");
+  el.className="card";
+  el.innerHTML = `<div class="label">CNN Fear &amp; Greed Index</div>
+    <div class="fg-body" data-role="fgbody"></div>`;
+  updateFG(el);
+  return el;
+}
+function updateFG(el){
+  const fg = DATA.fearGreed||{};
+  const body = el.querySelector('[data-role=fgbody]');
+  if(fg.error || fg.score==null){
+    body.innerHTML='<div class="err">F&G 데이터 일시 실패</div>';
+    return;
+  }
+  const score = Math.round(fg.score);
+  const colHex = colorForFG(score);
+
+  if(currentRange==="1d"){
+    // 숫자 게이지 + 히스토리 요약
+    const row=(l,v)=>v==null?"":`<span>${l} <b style="color:${colorForFG(v)}">${Math.round(v)}</b></span>`;
+    body.innerHTML = `
+      <div class="fg-num">
+        <div class="fg-score" style="color:${colHex}">${score}</div>
+        <div class="fg-rating" style="color:${colHex}">${ratingKo(fg.rating)}</div>
+        <div class="fg-bar"><div class="pin" style="left:${score}%"></div></div>
+        <div class="fg-hist">
+          ${row("전일",fg.previous_close)}${row("1주",fg.previous_1_week)}
+          ${row("1개월",fg.previous_1_month)}${row("1년",fg.previous_1_year)}
+        </div>
+      </div>`;
+  } else {
+    // 그래프 (기간만큼 자르기)
+    const now = Date.now();
+    const spanMs = {"5d":5,"1mo":30,"1y":365,"3y":365*3}[currentRange]*86400000;
+    const cutoff = now - spanMs;
+    let series = (fg.series||[]).filter(p=>p[0]>=cutoff);
+    if(series.length<2) series = fg.series||[];
+    body.innerHTML = `
+      <div class="price-row">
+        <span class="val" style="color:${colHex}">${score}</span>
+        <span class="chg" style="color:${colHex};font-weight:700">${ratingKo(fg.rating)}</span>
+      </div>
+      <div class="meta">${RANGES.find(r=>r.key===currentRange).label} 추이 (0=공포·100=탐욕)</div>
+      <div class="chart-wrap" data-role="fgchart"></div>`;
+    buildChart(el.querySelector('[data-role=fgchart]'), series, colHex, 0, currentRange);
+  }
+}
+
+// ---------- 숫자 전용 카드 (1페이지) ----------
+function numCardHTML(label, price, base, dec, diffMode, colorMode){
+  if(price==null){
+    return `<div class="numcard"><div class="nlabel">${label}</div>
+      <div class="nval">—</div><div class="nchg" style="color:var(--faint)">데이터 없음</div></div>`;
+  }
+  const up = base!=null ? price>=base : true;
+  const col = decideColor(price, base, colorMode).varColor;
+  let chg = "—";
+  if(base!=null){
+    const diff=price-base;
+    if(diffMode === "pp"){
+      chg = `${up?"+":""}${fmtNum(diff,2)}%p`;
+    } else if(diffMode === "delta"){
+      chg = `전월比 ${up?"+":""}${fmtNum(diff,dec)}`;
+    } else {
+      const pct=base?diff/base*100:0;
+      chg = `${up?"+":""}${pct.toFixed(2)}% (${up?"+":""}${fmtNum(diff,dec)})`;
+    }
+  }
+  return `<div class="numcard">
+    <div class="nlabel">${label}</div>
+    <div class="nval">${fmtNum(price,dec)}</div>
+    <div class="nchg" style="color:${col}">${chg}</div>
+  </div>`;
+}
+
+function renderNumGrid(){
+  const ng = document.getElementById("numgrid");
+  let html = "";
+  // F&G 숫자
+  const fg = DATA.fearGreed||{};
+  if(fg.score!=null){
+    const s=Math.round(fg.score), c=colorForFG(s);
+    html += `<div class="numcard"><div class="nlabel">Fear &amp; Greed</div>
+      <div class="nval" style="color:${c}">${s}</div>
+      <div class="nchg" style="color:${c}">${ratingKo(fg.rating)}</div></div>`;
+  }
+  // 시장 카드 전부 (현재 기간 기준)
+  DATA.cards.forEach(c=>{
+    const p=c.periods[currentRange]||{};
+    const base=(currentRange==="1d")
+      ? (p.prevClose ?? (p.series&&p.series.length?p.series[0][1]:p.price))
+      : (p.series&&p.series.length?p.series[0][1]:p.price);
+    const dec = (c.diffMode==="pp") ? c.decimals : 0;
+    html += numCardHTML(c.label, p.price, base, dec, c.diffMode, c.colorMode);
+  });
+  // 경제 카드도 요약에 포함
+  (DATA.econCards||[]).forEach(c=>{
+    const p=c.periods[currentRange]||{};
+    const base=(currentRange==="1d")
+      ? (p.prevClose ?? (p.series&&p.series.length?p.series[0][1]:p.price))
+      : (p.series&&p.series.length?p.series[0][1]:p.price);
+    const dec = (c.diffMode==="pp") ? c.decimals : 0;
+    html += numCardHTML(c.label, p.price, base, dec, c.diffMode, c.colorMode);
+  });
+  ng.innerHTML = html;
+}
+
+// ---------- 전체 렌더 ----------
+function renderAll(){
+  // 2페이지: 차트 그리드
+  const grid = document.getElementById("grid");
+  grid.innerHTML="";
+  grid.appendChild(renderFG());
+  DATA.cards.forEach(c => grid.appendChild(renderCard(c)));
+
+  // 1페이지: 숫자 그리드
+  renderNumGrid();
+
+  // 3페이지: 경제지표 그리드
+  const eg = document.getElementById("econgrid");
+  eg.innerHTML="";
+  const econ = DATA.econCards||[];
+  if(econ.length===0){
+    eg.innerHTML = `<div class="loading-skel">경제지표 준비 중입니다.</div>`;
+  } else {
+    econ.forEach(c => eg.appendChild(renderCard(c)));
+  }
+
+  const u = new Date(DATA.updatedAt);
+  document.getElementById("updated").innerHTML =
+    `데이터 시각: <b>${u.toLocaleString("ko-KR")}</b>`;
+}
+
+// ---------- 데이터 로드 ----------
+async function loadData(){
+  const btn = document.getElementById("resetBtn");
+  btn.classList.add("loading"); btn.disabled=true;
+  try{
+    const r = await fetch(DATA_URL+"?t="+Date.now(), {cache:"no-store"});
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    DATA = await r.json();
+    renderAll();
+  }catch(e){
+    document.getElementById("grid").innerHTML =
+      `<div class="err">data.json 로드 실패: ${e.message}<br>
+       GitHub Actions가 한 번 이상 실행되어 data.json이 생성됐는지 확인하세요.</div>`;
+  }finally{
+    btn.classList.remove("loading"); btn.disabled=false;
+  }
+}
+
+// ---------- 페이지 탭 전환 ----------
+let currentPage = "num";
+// 페이지별 기본/현재 기간 (요약=1일, 상세=5일, 경제=1년)
+const pageRange = { num:"1d", chart:"5d", econ:"1y" };
+const pagesEl = document.getElementById("pages");
+const panels = {
+  num: document.getElementById("numgrid"),
+  chart: document.getElementById("grid"),
+  econ: document.getElementById("econgrid"),
+};
+function syncRangeButtons(){
+  [...rangesEl.children].forEach(c=>
+    c.classList.toggle("active", c.dataset.key===currentRange));
+}
+function showPage(pg){
+  currentPage = pg;
+  currentRange = pageRange[pg] || "1d";   // 페이지의 기간으로 전환
+  Object.entries(panels).forEach(([k,el])=> el.classList.toggle("hidden", k!==pg));
+  [...pagesEl.children].forEach(b=> b.classList.toggle("active", b.dataset.page===pg));
+  syncRangeButtons();
+  if(DATA) renderAll();
+}
+[...pagesEl.children].forEach(b=>{
+  b.onclick = ()=> showPage(b.dataset.page);
+});
+
+// ---------- 기간 버튼 ----------
+const rangesEl = document.getElementById("ranges");
+RANGES.forEach(rg=>{
+  const b=document.createElement("button");
+  b.textContent=rg.label;
+  b.dataset.key=rg.key;
+  if(rg.key===currentRange) b.classList.add("active");
+  b.onclick=()=>{
+    if(rg.key===currentRange) return;
+    currentRange=rg.key;
+    pageRange[currentPage]=rg.key;   // 이 페이지의 기간 기억
+    syncRangeButtons();
+    if(DATA) renderAll();   // 재요청 없이 이미 받은 데이터로 다시 그림
+  };
+  rangesEl.appendChild(b);
+});
+
+// 시작 페이지: 1페이지(숫자, 1일)
+showPage("num");
+
+// 리셋(새로고침) 버튼 — 누를 때만 data.json 재요청
+document.getElementById("resetBtn").onclick = loadData;
+
+// 최초 1회 로드 (이후 자동 갱신 없음)
+loadData();
+</script>
+</body>
+</html>
