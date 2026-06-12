@@ -4,7 +4,7 @@
 Yahoo Finance + CNN Fear&Greed에서 기간별(1일/5일/30일/1년/3년) 데이터를 받아
 data.json 하나로 저장한다. GitHub Actions(서버)에서 실행되므로 CORS/프록시 불필요.
 """
-import urllib.request, urllib.parse, json, ssl, time, datetime, sys
+import urllib.request, urllib.parse, json, ssl, time, datetime, sys, os
 
 CTX = ssl.create_default_context()
 CTX.check_hostname = False
@@ -239,6 +239,15 @@ def _mom_change(series):
     return out
 
 
+def _mom(series):
+    """월별 지수 시계열 → 전월 대비 % 시계열 (SA 기준)."""
+    out = []
+    for i in range(1, len(series)):
+        if series[i-1][1]:
+            out.append([series[i][0], round((series[i][1] / series[i-1][1] - 1) * 100, 2)])
+    return out
+
+
 def _cut(series, n):
     return series[-n:] if len(series) > n else series[:]
 
@@ -265,7 +274,7 @@ def build_econ_cards():
         "core":  "CUSR0000SA0L1E",   # Core CPI, SA
         "unemp": "LNS14000000",      # 실업률 U-3, SA
         "nfp":   "CES0000000001",    # 비농업 총고용(천명), SA
-        "ppi":   "WPSFD4",           # PPI 최종수요
+        "ppi":   "WPSFD49116",       # PPI 최종수요, SA (계절조정)
     }
     try:
         bls = fetch_bls_multi(list(SID.values()), this_year - 4, this_year)
@@ -298,16 +307,35 @@ def build_econ_cards():
             if color_mode: c["colorMode"] = color_mode
             cards.append(c)
 
-    # 순서: PPI → CPI → 근원CPI → 실업률 → 고용 → 기준금리
-    # PPI (전년比)
+    def add_mom_card(cid, label, sid, note, color_mode="invert"):
+        s = bls.get(sid, [])
+        mom = _mom(s)
+        if len(mom) >= 2:
+            c = {
+                "id": cid, "label": label, "symbol": label, "decimals": 2,
+                "diffMode": "pp", "note": note,
+                "asof": _month_label(mom[-1][0]),
+                "periods": _econ_periods(mom, mom[-1][1], mom[-2][1]),
+            }
+            if color_mode: c["colorMode"] = color_mode
+            cards.append(c)
+
+    # 순서: PPI(YoY·MoM) → CPI(YoY·MoM) → 근원CPI(YoY·MoM) → 실업률 → 고용 → 기준금리
+    # PPI (전년比 / 전월比)
     add_yoy_card("ppi_yoy", "생산자물가 PPI (전년比 %)", SID["ppi"],
                  "매월 중순 발표 · 전월 기준 · CPI 선행지표")
-    # CPI (전년比)
+    add_mom_card("ppi_mom", "생산자물가 PPI (전월比 %)", SID["ppi"],
+                 "매월 중순 발표 · 계절조정 · 전월 대비")
+    # CPI (전년比 / 전월比)
     add_yoy_card("cpi_yoy", "미국 CPI (전년比 %)", SID["cpi"],
                  "매월 중순 발표 · 전월 기준")
-    # 근원 CPI (전년比)
+    add_mom_card("cpi_mom", "미국 CPI (전월比 %)", SID["cpi"],
+                 "매월 중순 발표 · 계절조정 · 전월 대비")
+    # 근원 CPI (전년比 / 전월比)
     add_yoy_card("core_cpi", "근원 CPI (전년比 %)", SID["core"],
                  "매월 중순 발표 · 전월 기준 · 식품·에너지 제외")
+    add_mom_card("core_cpi_mom", "근원 CPI (전월比 %)", SID["core"],
+                 "매월 중순 발표 · 계절조정 · 식품·에너지 제외")
     # 실업률 (레벨 %)
     add_level_card("unemp", "미국 실업률 (%)", SID["unemp"],
                    "매월 초 발표 (첫 금요일) · 전월 기준", dec=1)
@@ -347,6 +375,83 @@ def _month_label(ms):
 def _day_label(ms):
     dt = datetime.datetime.fromtimestamp(ms / 1000, datetime.timezone.utc)
     return f"{dt.year}-{dt.month:02d}-{dt.day:02d}"
+
+
+def fetch_fred_series(series_id, api_key, start_year):
+    """FRED 월별 시계열 → [[ms, value], ...]. 키 없으면 빈 리스트."""
+    if not api_key:
+        return []
+    url = ("https://api.stlouisfed.org/fred/series/observations"
+           f"?series_id={series_id}&api_key={api_key}&file_type=json"
+           f"&observation_start={start_year}-01-01")
+    raw = http_get(url, YH_HEADERS)
+    d = json.loads(raw)
+    out = []
+    for o in d.get("observations", []):
+        v = o.get("value", ".")
+        if v in (".", "", None):
+            continue
+        try:
+            fval = float(v)
+        except ValueError:
+            continue
+        try:
+            dt = datetime.datetime.strptime(o["date"], "%Y-%m-%d")
+        except (KeyError, ValueError):
+            continue
+        ms = int(dt.replace(tzinfo=datetime.timezone.utc).timestamp() * 1000)
+        out.append([ms, fval])
+    out.sort(key=lambda x: x[0])
+    return out
+
+
+def build_fred_cards():
+    """FRED_API_KEY가 있으면 PCE·근원PCE·소매판매 카드를 만든다. 없으면 빈 리스트."""
+    api_key = os.environ.get("FRED_API_KEY", "").strip()
+    if not api_key:
+        return []
+    this_year = datetime.datetime.now(datetime.timezone.utc).year
+    cards = []
+
+    def yoy_card(cid, label, sid, note, color_mode="invert"):
+        try:
+            s = fetch_fred_series(sid, api_key, this_year - 4)
+        except Exception as e:
+            print(f"  ! FRED {sid} fail:", str(e)[:60]); return
+        yoy = _yoy(s)
+        if len(yoy) >= 2:
+            c = {"id": cid, "label": label, "symbol": label, "decimals": 2,
+                 "diffMode": "pp", "note": note, "asof": _month_label(yoy[-1][0]),
+                 "periods": _econ_periods(yoy, yoy[-1][1], yoy[-2][1])}
+            if color_mode: c["colorMode"] = color_mode
+            cards.append(c)
+
+    def mom_card(cid, label, sid, note, color_mode="invert"):
+        try:
+            s = fetch_fred_series(sid, api_key, this_year - 4)
+        except Exception as e:
+            print(f"  ! FRED {sid} fail:", str(e)[:60]); return
+        mom = _mom(s)
+        if len(mom) >= 2:
+            c = {"id": cid, "label": label, "symbol": label, "decimals": 2,
+                 "diffMode": "pp", "note": note, "asof": _month_label(mom[-1][0]),
+                 "periods": _econ_periods(mom, mom[-1][1], mom[-2][1])}
+            if color_mode: c["colorMode"] = color_mode
+            cards.append(c)
+
+    # PCE 물가 (연준 공식 목표 지표)
+    yoy_card("pce_yoy", "PCE 물가 (전년比 %)", "PCEPI",
+             "매월 말 발표 · 연준 공식 목표(2%) 지표")
+    mom_card("pce_mom", "PCE 물가 (전월比 %)", "PCEPI",
+             "매월 말 발표 · 계절조정 · 전월 대비")
+    # 근원 PCE
+    yoy_card("core_pce_yoy", "근원 PCE (전년比 %)", "PCEPILFE",
+             "매월 말 발표 · 식품·에너지 제외 · 연준 핵심지표")
+    # 소매판매 (소비 증가는 긍정 → 오르면 녹색)
+    mom_card("retail_mom", "소매판매 (전월比 %)", "RSAFS",
+             "매월 중순 발표 · 계절조정 · 소비 동향", color_mode=None)
+
+    return cards
 
 
 def fetch_effr():
@@ -517,6 +622,28 @@ def main():
 
     # 3페이지(경제지표) 카드들
     econ_cards = build_econ_cards()
+
+    # FRED 카드(PCE·근원PCE·소매판매)를 의미에 맞는 위치에 삽입
+    fred_cards = build_fred_cards()
+    if fred_cards:
+        fred_by_id = {c["id"]: c for c in fred_cards}
+        # 물가 3종(PCE YoY·MoM, 근원PCE)은 근원CPI(전월比) 뒤에
+        price_block = [fred_by_id[k] for k in ("pce_yoy", "pce_mom", "core_pce_yoy")
+                       if k in fred_by_id]
+        idx = next((i for i, c in enumerate(econ_cards)
+                    if c["id"] == "core_cpi_mom"), None)
+        if idx is not None and price_block:
+            econ_cards[idx+1:idx+1] = price_block
+        elif price_block:
+            econ_cards.extend(price_block)
+        # 소매판매는 실업률 앞에
+        if "retail_mom" in fred_by_id:
+            ridx = next((i for i, c in enumerate(econ_cards)
+                         if c["id"] == "unemp"), None)
+            if ridx is not None:
+                econ_cards.insert(ridx, fred_by_id["retail_mom"])
+            else:
+                econ_cards.append(fred_by_id["retail_mom"])
 
     fng = fetch_fng()
     out = {
