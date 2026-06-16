@@ -25,10 +25,14 @@ def fmt(n, dec):
     return f"{n:,.{dec}f}"
 
 
-def row_html(label, price, base, dec, diff_mode=None, color_mode=None):
+def row_html(label, price, base, dec, diff_mode=None, color_mode=None, big=False):
+    pad = "10px 12px" if big else "7px 12px"
+    label_fs = "15px" if big else "13px"
+    price_fs = "20px" if big else "13px"
+    chg_fs = "14px" if big else "13px"
     if price is None:
-        return f'<tr><td style="padding:7px 12px;border-bottom:1px solid #eee">{label}</td>' \
-               f'<td colspan="2" style="padding:7px 12px;border-bottom:1px solid #eee;color:{DIM}">데이터 없음</td></tr>'
+        return f'<tr><td style="padding:{pad};border-bottom:1px solid #eee;font-size:{label_fs}">{label}</td>' \
+               f'<td colspan="2" style="padding:{pad};border-bottom:1px solid #eee;color:{DIM}">데이터 없음</td></tr>'
     up = base is not None and price >= base
     # 색상 결정: colorMode에 따라 녹/적 반전
     if color_mode == "negRed":
@@ -54,9 +58,9 @@ def row_html(label, price, base, dec, diff_mode=None, color_mode=None):
         chg = "—"
     return (
         f'<tr>'
-        f'<td style="padding:7px 12px;border-bottom:1px solid #eee">{label}</td>'
-        f'<td style="padding:7px 12px;border-bottom:1px solid #eee;text-align:right;font-weight:700">{fmt(price, dec)}</td>'
-        f'<td style="padding:7px 12px;border-bottom:1px solid #eee;text-align:right;color:{col};font-weight:600">{chg}</td>'
+        f'<td style="padding:{pad};border-bottom:1px solid #eee;font-size:{label_fs}">{label}</td>'
+        f'<td style="padding:{pad};border-bottom:1px solid #eee;text-align:right;font-weight:700;font-size:{price_fs}">{fmt(price, dec)}</td>'
+        f'<td style="padding:{pad};border-bottom:1px solid #eee;text-align:right;color:{col};font-weight:600;font-size:{chg_fs}">{chg}</td>'
         f'</tr>'
     )
 
@@ -68,15 +72,19 @@ def build_email(data):
     upstr = updated.strftime("%Y-%m-%d %H:%M")
 
     # 1일 기준 등락 (전일종가 대비)
+    # 'vix'까지는 큰 글씨(big), 그 이후 카드는 일반 크기
+    big_until_idx = next((i for i, c in enumerate(cards) if c.get("id") == "vix"), -1)
     body_rows = ""
-    for c in cards:
+    for i, c in enumerate(cards):
         p = c["periods"].get("1d", {})
         price = p.get("price")
         base = p.get("prevClose")
         if base is None and p.get("series"):
             base = p["series"][0][1]
         dec = c["decimals"] if c.get("diffMode") == "pp" else 0
-        body_rows += row_html(c["label"], price, base, dec, c.get("diffMode"), c.get("colorMode"))
+        is_big = (big_until_idx == -1) or (i <= big_until_idx)
+        body_rows += row_html(c["label"], price, base, dec,
+                              c.get("diffMode"), c.get("colorMode"), big=is_big)
 
     # 경제지표 (3페이지) — 라벨에 기준월 표기
     econ_rows = ""
@@ -94,10 +102,10 @@ def build_email(data):
         score = round(fg["score"])
         rating = fg.get("rating", "")
         fg_html = (
-            f'<div style="margin:18px 0;padding:14px 16px;background:#f7f8fa;border-radius:10px">'
-            f'<span style="font-size:13px;color:#666">CNN Fear &amp; Greed Index</span><br>'
-            f'<span style="font-size:30px;font-weight:800">{score}</span> '
-            f'<span style="font-size:14px;color:#666">/ {rating}</span></div>'
+            f'<div style="margin:18px 0;padding:16px 18px;background:#f7f8fa;border-radius:10px">'
+            f'<span style="font-size:14px;color:#666">CNN Fear &amp; Greed Index</span><br>'
+            f'<span style="font-size:44px;font-weight:800;line-height:1.1">{score}</span> '
+            f'<span style="font-size:16px;color:#666">/ {rating}</span></div>'
         )
 
     html = f"""\
@@ -123,6 +131,13 @@ def build_email(data):
       <p style="font-size:11px;color:#aaa;margin-top:16px">
         전일종가 대비 등락 기준. 자세한 차트는 대시보드에서 확인하세요.
       </p>
+      <div style="text-align:center;margin-top:18px">
+        <a href="https://wg052026.github.io/finboard-/"
+           style="display:inline-block;background:#2a4d8f;color:#fff;text-decoration:none;
+                  font-size:15px;font-weight:700;padding:13px 28px;border-radius:10px">
+          📊 대시보드 바로가기
+        </a>
+      </div>
     </div>
   </div>
 </body></html>"""
