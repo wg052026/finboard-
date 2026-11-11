@@ -261,6 +261,70 @@ def _econ_periods(series, last_price, prev_base):
     return periods
 
 
+def build_drawdown_card(cid, label, symbol):
+    """전체 기록(상장 이후) 최고점 대비 현재 낙폭 카드.
+    - price: 지금이 역대 최고점에서 몇 % 아래인가 (음수 %)
+    - 기간별 series: 그 구간의 낙폭 추이 (역대 최고점 기준)
+    - colorMode 없음(기본): 값이 커지면(0에 가까워지면=회복) 녹색, 더 빠지면 빨강
+    """
+    try:
+        # 역대 최고점: 과거 전체(월봉)로 큰 틀을 잡고, 최근 10년은 일봉으로 정밀하게 잡는다
+        # (월봉은 그 달 종가만 담아 장중 신고가를 놓치므로 일봉으로 보완)
+        all_closes = []
+        try:
+            mx = fetch_yahoo(symbol, "max", "1mo")
+            all_closes += [v for _, v in mx.get("series", [])]
+        except Exception:
+            pass
+        try:
+            dy = fetch_yahoo(symbol, "10y", "1d")
+            all_closes += [v for _, v in dy.get("series", [])]
+        except Exception:
+            pass
+        if not all_closes:
+            return None
+        ath = max(all_closes)  # 전체 기록 최고점
+
+        now = None
+        try:
+            now = fetch_yahoo(symbol, "1d", "5m").get("price")
+        except Exception:
+            pass
+        if now is None:
+            now = all_closes[-1]
+
+        cur_dd = round((now / ath - 1) * 100, 2)  # 현재 낙폭 %
+
+        # 기간별 낙폭 추이: 그 구간을 받아 역대 최고점(ath) 대비 % 로 변환
+        # ath 는 구간 밖(과거)일 수 있으므로, 구간 내 러닝 피크와 ath 중 큰 값을 피크로 쓴다
+        periods = {}
+        for key, (rng, iv) in RANGES.items():
+            try:
+                d = fetch_yahoo(symbol, rng, iv)
+                s = d.get("series", [])
+                dd_series = []
+                run_peak = ath
+                for t, v in s:
+                    if v > run_peak:
+                        run_peak = v
+                    dd_series.append([t, round((v / run_peak - 1) * 100, 2)])
+                prev = dd_series[-2][1] if len(dd_series) >= 2 else cur_dd
+                periods[key] = {"price": cur_dd, "prevClose": prev, "series": dd_series}
+            except Exception:
+                periods[key] = {"price": cur_dd, "prevClose": cur_dd, "series": []}
+
+        return {
+            "id": cid, "label": label, "symbol": symbol, "decimals": 2,
+            "diffMode": "pp",
+            "note": "전체 기록 최고점 대비 현재 낙폭 (MDD 관점)",
+            "asof": _day_label(int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000)),
+            "periods": periods,
+        }
+    except Exception as e:
+        print(f"  ! drawdown {symbol} fail:", str(e)[:60])
+        return None
+
+
 def build_econ_cards():
     """3페이지 경제지표 카드들을 생성한다.
     CPI·근원CPI: 전년比 %(pp) / 실업률·PPI(전년比): %(pp) /
@@ -644,6 +708,15 @@ def main():
                 econ_cards.insert(ridx, fred_by_id["retail_mom"])
             else:
                 econ_cards.append(fred_by_id["retail_mom"])
+
+    # 전고점 대비 낙폭(MDD 관점): 나스닥·SOXX — 경제지표 맨 뒤에
+    for cid, label, sym in [
+        ("dd_nasdaq", "나스닥 전고점 대비 낙폭 (%)", "^IXIC"),
+        ("dd_soxx", "SOXX 반도체 전고점 대비 낙폭 (%)", "SOXX"),
+    ]:
+        c = build_drawdown_card(cid, label, sym)
+        if c:
+            econ_cards.append(c)
 
     fng = fetch_fng()
     out = {
