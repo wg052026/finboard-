@@ -103,6 +103,26 @@
   .numcard .nval{font-size:25px;font-weight:700;letter-spacing:-.5px;}
   .numcard .nchg{font-size:13px;font-weight:600;margin-top:3px;}
   .hidden{display:none;}
+
+  /* ④ 낙폭 페이지 */
+  .dd-sub{font-size:12px;color:var(--faint);margin-bottom:12px;}
+  .dd-card{background:linear-gradient(180deg,#171821,#13141b);border:1px solid var(--line);border-radius:14px;padding:16px 14px 10px;}
+  .dd-legend{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:10px;padding-left:4px;}
+  .dd-legend span{font-size:12.5px;display:inline-flex;align-items:center;gap:6px;color:var(--dim);}
+  .dd-legend i{width:14px;height:3px;border-radius:2px;display:inline-block;}
+  .dd-wrap{position:relative;width:100%;height:420px;}
+  #ddsvg{width:100%;height:100%;display:block;overflow:visible;}
+  .dd-grid{stroke:var(--line);stroke-width:1;}
+  .dd-zero{stroke:#444;stroke-width:1;stroke-dasharray:4 4;}
+  .dd-axis{fill:var(--faint);font-size:11px;}
+  .dd-hl{stroke:var(--faint);stroke-width:1;stroke-dasharray:3 3;opacity:0;}
+  .dd-tip{position:absolute;pointer-events:none;opacity:0;background:#0c0d12f0;border:1px solid #333646;border-radius:8px;padding:8px 11px;font-size:12px;white-space:nowrap;z-index:5;transition:opacity .08s;}
+  .dd-tip .td{color:var(--dim);font-size:11px;margin-bottom:4px;}
+  .dd-tip .row{display:flex;align-items:center;gap:6px;margin-top:2px;}
+  .dd-tip .row i{width:9px;height:9px;border-radius:2px;}
+  .dd-stats{display:flex;gap:18px;flex-wrap:wrap;margin-top:12px;padding:0 4px;}
+  .dd-stat{font-size:12px;color:var(--dim);}
+  .dd-stat b{color:var(--txt);font-weight:700;}
 </style>
 </head>
 <body>
@@ -115,9 +135,10 @@
     <button data-page="num" class="active">① 요약 (숫자)</button>
     <button data-page="chart">② 상세 (차트)</button>
     <button data-page="econ">③ 경제지표</button>
+    <button data-page="dd">④ 낙폭</button>
   </div>
 
-  <div class="controls">
+  <div class="controls" id="controls">
     <div class="ranges" id="ranges"></div>
     <button class="reset" id="resetBtn">
       <span class="spin"></span><span class="rtxt">↻ 새로고침</span>
@@ -129,6 +150,24 @@
     <div class="loading-skel">데이터 불러오는 중…</div>
   </div>
   <div class="grid hidden" id="econgrid"></div>
+
+  <!-- ④ 낙폭 페이지 -->
+  <div class="hidden" id="ddpanel">
+    <div class="dd-sub">그 시점까지의 최고점 대비 낙폭 (0% = 신고가) · 당시 실제로 느낀 낙폭 기준</div>
+    <div class="ranges" id="ddranges">
+      <button data-m="12">최근 12개월</button>
+      <button data-m="24">최근 24개월</button>
+      <button data-m="36" class="active">최근 36개월</button>
+    </div>
+    <div class="dd-card">
+      <div class="dd-legend" id="ddlegend"></div>
+      <div class="dd-wrap" id="ddwrap">
+        <svg id="ddsvg" preserveAspectRatio="none"></svg>
+        <div class="dd-tip" id="ddtip"></div>
+      </div>
+      <div class="dd-stats" id="ddstats"></div>
+    </div>
+  </div>
 
 <script>
 const RANGES = [
@@ -480,6 +519,99 @@ async function loadData(){
   }
 }
 
+// ---------- ④ 낙폭 페이지 ----------
+let ddMonths = 36;
+const DD_COLORS = {"S&P500":"#4a9eff","나스닥":"#3fd07a","SOXX":"#f0556b"};
+function renderDrawdown(){
+  const dd = DATA.drawdown;
+  const wrapBox = document.getElementById("ddwrap");
+  if(!dd || !dd.dates || !dd.dates.length){
+    document.getElementById("ddlegend").innerHTML="";
+    wrapBox.innerHTML='<div class="loading-skel">낙폭 데이터 준비 중입니다. (다음 갱신 후 표시)</div>';
+    document.getElementById("ddstats").innerHTML="";
+    return;
+  }
+  const NAMES = Object.keys(dd.series);
+  const nAll = dd.dates.length;
+  const now = dd.dates[nAll-1];
+  const cutoff = now - ddMonths*30.44*86400000;
+  let start=0;
+  for(let i=0;i<nAll;i++){ if(dd.dates[i]>=cutoff){ start=i; break; } }
+  const dates = dd.dates.slice(start);
+  const series = {}; NAMES.forEach(k=> series[k]=dd.series[k].slice(start));
+  const n = dates.length;
+
+  const W=1000,H=420,padL=48,padR=16,padT=12,padB=28;
+  let minV=0; NAMES.forEach(k=>series[k].forEach(v=>{if(v<minV)minV=v;}));
+  minV=Math.floor(minV/5)*5-2;
+  const X=i=> padL + (i/(n-1))*(W-padL-padR);
+  const Y=v=> padT + (v/minV)*(H-padT-padB);
+
+  const fmtD=ms=>{const d=new Date(ms);return `${d.getFullYear()}.${d.getMonth()+1}.${d.getDate()}`;};
+  let g="";
+  for(let v=0; v>=minV; v-=5){
+    const y=Y(v);
+    g+=`<line class="${v===0?'dd-zero':'dd-grid'}" x1="${padL}" y1="${y}" x2="${W-padR}" y2="${y}"/>`;
+    g+=`<text class="dd-axis" x="${padL-6}" y="${y+4}" text-anchor="end">${v}%</text>`;
+  }
+  let lastM=-1;
+  for(let i=0;i<n;i++){
+    const d=new Date(dates[i]); const m=d.getFullYear()*12+d.getMonth();
+    if(m!==lastM){ lastM=m;
+      if(d.getMonth()%(ddMonths>24?3:(ddMonths>12?2:1))===0){
+        g+=`<text class="dd-axis" x="${X(i)}" y="${H-8}" text-anchor="middle">${(d.getFullYear()+'').slice(2)}.${d.getMonth()+1}</text>`;
+      }
+    }
+  }
+  NAMES.forEach(k=>{
+    const s=series[k];
+    const path=s.map((v,i)=>(i?"L":"M")+X(i).toFixed(1)+" "+Y(v).toFixed(1)).join(" ");
+    g+=`<path d="${path}" fill="none" stroke="${DD_COLORS[k]||'#888'}" stroke-width="1.6" vector-effect="non-scaling-stroke"/>`;
+  });
+  // 최저점 표시
+  NAMES.forEach(k=>{
+    const s=series[k]; let mi=0; for(let i=1;i<s.length;i++){ if(s[i]<s[mi]) mi=i; }
+    const x=X(mi), y=Y(s[mi]);
+    const anchor = x>W-120?"end":"middle"; const lx=x>W-120?x-8:x;
+    g+=`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4" fill="${DD_COLORS[k]}" stroke="#0c0d12" stroke-width="1.5"/>`;
+    g+=`<text x="${lx.toFixed(1)}" y="${(y+16).toFixed(1)}" text-anchor="${anchor}" fill="${DD_COLORS[k]}" font-size="12" font-weight="700">최저 ${s[mi].toFixed(1)}%</text>`;
+  });
+  g+=`<line class="dd-hl" id="ddhl" x1="0" y1="${padT}" x2="0" y2="${H-padB}"/>`;
+  const svg=document.getElementById("ddsvg");
+  svg.setAttribute("viewBox",`0 0 ${W} ${H}`); svg.innerHTML=g;
+
+  document.getElementById("ddlegend").innerHTML=NAMES.map(k=>`<span><i style="background:${DD_COLORS[k]}"></i>${k}</span>`).join("");
+  document.getElementById("ddstats").innerHTML=NAMES.map(k=>{
+    const s=series[k]; const mn=Math.min(...s); const cur=s[s.length-1];
+    return `<span class="dd-stat">${k}: 최저 <b style="color:${DD_COLORS[k]}">${mn.toFixed(1)}%</b> · 현재 <b>${cur.toFixed(1)}%</b></span>`;
+  }).join("");
+
+  const tip=document.getElementById("ddtip"), hl=document.getElementById("ddhl");
+  function move(ev){
+    const r=wrapBox.getBoundingClientRect();
+    const px=(ev.touches?ev.touches[0].clientX:ev.clientX)-r.left;
+    let i=Math.round(((px/r.width)*W - padL)/((W-padL-padR)/(n-1)));
+    i=Math.max(0,Math.min(n-1,i));
+    const xSvg=X(i), xPx=(xSvg/W)*r.width;
+    hl.setAttribute("x1",xSvg); hl.setAttribute("x2",xSvg); hl.style.opacity=1;
+    let html=`<div class="td">${fmtD(dates[i])}</div>`;
+    NAMES.forEach(k=>{ html+=`<div class="row"><i style="background:${DD_COLORS[k]}"></i><span>${k}</span> <b style="color:${DD_COLORS[k]}">${series[k][i].toFixed(1)}%</b></div>`; });
+    tip.innerHTML=html;
+    let left=xPx; if(left>r.width-120)left=r.width-120; if(left<70)left=70;
+    tip.style.left=left+"px"; tip.style.top="8px"; tip.style.transform="translateX(-50%)"; tip.style.opacity=1;
+  }
+  wrapBox.onmousemove=move; wrapBox.ontouchmove=move;
+  wrapBox.onmouseleave=()=>{tip.style.opacity=0;hl.style.opacity=0;};
+}
+// 낙폭 기간 버튼
+document.querySelectorAll("#ddranges button").forEach(b=>{
+  b.onclick=()=>{
+    ddMonths=+b.dataset.m;
+    document.querySelectorAll("#ddranges button").forEach(x=>x.classList.toggle("active",x===b));
+    if(DATA) renderDrawdown();
+  };
+});
+
 // ---------- 페이지 탭 전환 ----------
 let currentPage = "num";
 // 페이지별 기본/현재 기간 (요약=1일, 상세=5일, 경제=1년)
@@ -489,6 +621,7 @@ const panels = {
   num: document.getElementById("numgrid"),
   chart: document.getElementById("grid"),
   econ: document.getElementById("econgrid"),
+  dd: document.getElementById("ddpanel"),
 };
 function syncRangeButtons(){
   [...rangesEl.children].forEach(c=>
@@ -496,9 +629,15 @@ function syncRangeButtons(){
 }
 function showPage(pg){
   currentPage = pg;
-  currentRange = pageRange[pg] || "1d";   // 페이지의 기간으로 전환
   Object.entries(panels).forEach(([k,el])=> el.classList.toggle("hidden", k!==pg));
   [...pagesEl.children].forEach(b=> b.classList.toggle("active", b.dataset.page===pg));
+  // 낙폭 페이지는 자체 기간버튼을 쓰므로 상단 기간/새로고침 줄을 숨긴다
+  document.getElementById("controls").classList.toggle("hidden", pg==="dd");
+  if(pg==="dd"){
+    if(DATA) renderDrawdown();
+    return;
+  }
+  currentRange = pageRange[pg] || "1d";   // 페이지의 기간으로 전환
   syncRangeButtons();
   if(DATA) renderAll();
 }

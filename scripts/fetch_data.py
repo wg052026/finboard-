@@ -261,6 +261,59 @@ def _econ_periods(series, last_price, prev_base):
     return periods
 
 
+def build_drawdown_series(symbols):
+    """낙폭 페이지용 36개월 일별 낙폭(그 시점 전고점 기준) 시계열.
+    symbols: [(id, label, yahoo심볼), ...]
+    반환: {"dates":[ms,...], "series":{label:[dd%,...]}}  (세 지수 길이 동일)
+    """
+    import datetime as _dt
+    now = _dt.datetime.now(_dt.timezone.utc)
+    cutoff = int((now - _dt.timedelta(days=365 * 3 + 10)).timestamp()) * 1000
+    cols = {}
+    ref_dates = None
+    for sid, label, sym in symbols:
+        try:
+            d = fetch_yahoo(sym, "5y", "1d")  # 러닝피크를 길게 쌓기
+            s = d.get("series", [])
+            peak = s[0][1] if s else None
+            rows = []
+            for t, v in s:
+                if peak is None or v > peak:
+                    peak = v
+                if t >= cutoff and peak:
+                    rows.append((t, round((v / peak - 1) * 100, 2)))
+            cols[label] = rows
+            if ref_dates is None or len(rows) > len(ref_dates):
+                ref_dates = rows
+        except Exception as e:
+            print(f"  ! drawdown series {sym} fail:", str(e)[:50])
+            cols[label] = []
+    if not ref_dates:
+        return None
+    # 날짜축은 가장 긴 것 기준, 각 지수를 날짜로 맞춰 정렬
+    date_list = [t for t, _ in ref_dates]
+    out_series = {}
+    for label, rows in cols.items():
+        m = {t: v for t, v in rows}
+        out_series[label] = [m.get(t) for t in date_list]
+    # None 메우기(앞값 유지)
+    for label, arr in out_series.items():
+        last = None
+        for i in range(len(arr)):
+            if arr[i] is None:
+                arr[i] = last
+            else:
+                last = arr[i]
+        # 맨 앞 None 은 뒤의 첫 값으로
+        first = next((x for x in arr if x is not None), 0)
+        for i in range(len(arr)):
+            if arr[i] is None:
+                arr[i] = first
+            else:
+                break
+    return {"dates": date_list, "series": out_series}
+
+
 def build_drawdown_card(cid, label, symbol):
     """전체 기록(상장 이후) 최고점 대비 현재 낙폭 카드.
     - price: 지금이 역대 최고점에서 몇 % 아래인가 (음수 %)
@@ -718,6 +771,17 @@ def main():
         if c:
             econ_cards.append(c)
 
+    # 낙폭 페이지(4페이지)용 36개월 시계열
+    try:
+        dd_series = build_drawdown_series([
+            ("spx", "S&P500", "^GSPC"),
+            ("nasdaq", "나스닥", "^IXIC"),
+            ("soxx", "SOXX", "SOXX"),
+        ])
+    except Exception as e:
+        print("  ! drawdown series fail:", str(e)[:60])
+        dd_series = None
+
     fng = fetch_fng()
     out = {
         "updatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -725,6 +789,8 @@ def main():
         "cards": cards,           # 시장 지표 (1·2페이지 공용)
         "econCards": econ_cards,  # 경제 지표 (3페이지)
     }
+    if dd_series:
+        out["drawdown"] = dd_series  # 낙폭 페이지 (4페이지)
     with open("data.json", "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
 
