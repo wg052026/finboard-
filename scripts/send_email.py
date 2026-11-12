@@ -74,8 +74,36 @@ def build_email(data):
     # 1일 기준 등락 (전일종가 대비)
     # 'vix'까지는 큰 글씨(big), 그 이후 카드는 일반 크기
     big_until_idx = next((i for i, c in enumerate(cards) if c.get("id") == "vix"), -1)
+
+    # 낙폭(그 시점 전고점 대비) — SOXX·나스닥·S&P500 순. VIX 다음에 끼운다.
+    # 현재가 칸: 오늘 낙폭 / 전일대비 칸: 전일 낙폭
+    dd_series = (data.get("drawdown") or {}).get("series", {})
+    def _last_two(lst):
+        vals = [v for v in (lst or []) if v is not None]
+        today = vals[-1] if vals else None
+        prev = vals[-2] if len(vals) >= 2 else None
+        return today, prev
+    dd_order = [("SOXX", "SOXX 낙폭"), ("나스닥", "나스닥 낙폭"), ("S&P500", "S&P500 낙폭")]
+    dd_rows = ""
+    for key, lbl in dd_order:
+        today, prev = _last_two(dd_series.get(key))
+        if today is None:
+            continue
+        prev_txt = f"전일 {prev:.1f}%" if prev is not None else ""
+        dd_rows += (
+            '<tr>'
+            '<td style="padding:7px 12px;border-bottom:1px solid #eee;font-size:13px">' + lbl + '</td>'
+            '<td style="padding:7px 12px;border-bottom:1px solid #eee;text-align:right;'
+            'font-weight:700;font-size:15px;color:#e5484d">' + f"{today:.1f}%" + '</td>'
+            '<td style="padding:7px 12px;border-bottom:1px solid #eee;text-align:right;'
+            'color:#888;font-size:12px">' + prev_txt + '</td>'
+            '</tr>'
+        )
+
     body_rows = ""
     for i, c in enumerate(cards):
+        if c.get("id") == "spread102":   # 금리차 줄은 메일 본문에서 뺀다
+            continue
         p = c["periods"].get("1d", {})
         price = p.get("price")
         base = p.get("prevClose")
@@ -85,6 +113,8 @@ def build_email(data):
         is_big = (big_until_idx == -1) or (i <= big_until_idx)
         body_rows += row_html(c["label"], price, base, dec,
                               c.get("diffMode"), c.get("colorMode"), big=is_big)
+        if c.get("id") == "vix":         # VIX 바로 다음에 낙폭 세 줄
+            body_rows += dd_rows
 
     # 경제지표 (3페이지) — 라벨에 기준월 표기
     econ_rows = ""

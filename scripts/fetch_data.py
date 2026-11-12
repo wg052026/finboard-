@@ -315,28 +315,26 @@ def build_drawdown_series(symbols):
 
 
 def build_drawdown_card(cid, label, symbol):
-    """전체 기록(상장 이후) 최고점 대비 현재 낙폭 카드.
-    - price: 지금이 역대 최고점에서 몇 % 아래인가 (음수 %)
-    - 기간별 series: 그 구간의 낙폭 추이 (역대 최고점 기준)
+    """그 시점까지의 전고점(러닝피크) 대비 낙폭 카드 — ④낙폭 그래프와 같은 기준.
+    - price: 지금이 '직전까지의 전고점'에서 몇 % 아래인가 (음수 %)
+    - 기간별 series: 그 구간의 낙폭 추이 (그 시점 전고점 기준)
     - colorMode 없음(기본): 값이 커지면(0에 가까워지면=회복) 녹색, 더 빠지면 빨강
     """
     try:
-        # 역대 최고점: 과거 전체(월봉)로 큰 틀을 잡고, 최근 10년은 일봉으로 정밀하게 잡는다
-        # (월봉은 그 달 종가만 담아 장중 신고가를 놓치므로 일봉으로 보완)
-        all_closes = []
+        # ④낙폭 그래프와 같은 소스(5년·일별)로 전고점을 쌓는다 — max·1d 는 간격이 성겨
+        # 최근 고점을 놓쳐 낙폭이 0 으로 나오는 문제가 있었다(2026-11-12 확인)
+        base = []
         try:
-            mx = fetch_yahoo(symbol, "max", "1mo")
-            all_closes += [v for _, v in mx.get("series", [])]
+            base = fetch_yahoo(symbol, "5y", "1d").get("series", [])
         except Exception:
             pass
-        try:
-            dy = fetch_yahoo(symbol, "10y", "1d")
-            all_closes += [v for _, v in dy.get("series", [])]
-        except Exception:
-            pass
-        if not all_closes:
+        if not base:
+            try:
+                base = fetch_yahoo(symbol, "10y", "1d").get("series", [])
+            except Exception:
+                pass
+        if not base:
             return None
-        ath = max(all_closes)  # 전체 기록 최고점
 
         now = None
         try:
@@ -344,23 +342,36 @@ def build_drawdown_card(cid, label, symbol):
         except Exception:
             pass
         if now is None:
-            now = all_closes[-1]
+            now = base[-1][1]
 
-        cur_dd = round((now / ath - 1) * 100, 2)  # 현재 낙폭 %
+        # 전체 일봉으로 '그 시점까지의 전고점'을 끝까지 쌓는다
+        run_peak = base[0][1]
+        for _, v in base:
+            if v > run_peak:
+                run_peak = v
+        if now > run_peak:
+            run_peak = now
+        cur_dd = round((now / run_peak - 1) * 100, 2)  # 전고점 대비 현재 낙폭 %
 
-        # 기간별 낙폭 추이: 그 구간을 받아 역대 최고점(ath) 대비 % 로 변환
-        # ath 는 구간 밖(과거)일 수 있으므로, 구간 내 러닝 피크와 ath 중 큰 값을 피크로 쓴다
+        # 기간별 낙폭 추이: 전체 전고점을 이어받아 구간 내에서 계속 갱신
         periods = {}
         for key, (rng, iv) in RANGES.items():
             try:
                 d = fetch_yahoo(symbol, rng, iv)
                 s = d.get("series", [])
                 dd_series = []
-                run_peak = ath
+                rp = run_peak_at_start = None
+                # 구간 시작 전까지의 전고점을 base 에서 먼저 구한다
+                if s:
+                    t0 = s[0][0]
+                    rp = base[0][1]
+                    for t, v in base:
+                        if t < t0 and v > rp:
+                            rp = v
                 for t, v in s:
-                    if v > run_peak:
-                        run_peak = v
-                    dd_series.append([t, round((v / run_peak - 1) * 100, 2)])
+                    if v > rp:
+                        rp = v
+                    dd_series.append([t, round((v / rp - 1) * 100, 2)])
                 prev = dd_series[-2][1] if len(dd_series) >= 2 else cur_dd
                 periods[key] = {"price": cur_dd, "prevClose": prev, "series": dd_series}
             except Exception:
@@ -369,7 +380,7 @@ def build_drawdown_card(cid, label, symbol):
         return {
             "id": cid, "label": label, "symbol": symbol, "decimals": 2,
             "diffMode": "pp",
-            "note": "전체 기록 최고점 대비 현재 낙폭 (MDD 관점)",
+            "note": "그 시점까지의 전고점 대비 현재 낙폭",
             "asof": _day_label(int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000)),
             "periods": periods,
         }
