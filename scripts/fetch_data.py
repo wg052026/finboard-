@@ -773,14 +773,7 @@ def main():
             else:
                 econ_cards.append(fred_by_id["retail_mom"])
 
-    # 전고점 대비 낙폭(MDD 관점): 나스닥·SOXX — 경제지표 맨 뒤에
-    for cid, label, sym in [
-        ("dd_nasdaq", "나스닥 전고점 대비 낙폭 (%)", "^IXIC"),
-        ("dd_soxx", "SOXX 반도체 전고점 대비 낙폭 (%)", "SOXX"),
-    ]:
-        c = build_drawdown_card(cid, label, sym)
-        if c:
-            econ_cards.append(c)
+    # (낙폭 카드는 메일 VIX 다음 낙폭 3종과 중복되어 경제지표란에서 제거함 2026-11-12)
 
     # 낙폭 페이지(4페이지)용 36개월 시계열
     try:
