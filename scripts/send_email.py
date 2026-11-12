@@ -89,14 +89,22 @@ def build_email(data):
         today, prev = _last_two(dd_series.get(key))
         if today is None:
             continue
-        prev_txt = f"전일 {prev:.1f}%" if prev is not None else ""
+        # 전일보다 낙폭이 얕아지면(올라가면=회복) 녹색, 깊어지면(내려가면) 빨강
+        if prev is not None:
+            diff = today - prev
+            pcol = "#16a34a" if diff > 0 else ("#e5484d" if diff < 0 else "#888")
+            arrow = "▲" if diff > 0 else ("▼" if diff < 0 else "")
+            prev_cell = (f'{prev:.1f}% '
+                         f'<span style="color:{pcol};font-weight:600">{arrow}{abs(diff):.1f}%p</span>')
+        else:
+            prev_cell = ""
         dd_rows += (
             '<tr>'
             '<td style="padding:7px 12px;border-bottom:1px solid #eee;font-size:13px">' + lbl + '</td>'
             '<td style="padding:7px 12px;border-bottom:1px solid #eee;text-align:right;'
             'font-weight:700;font-size:15px;color:#e5484d">' + f"{today:.1f}%" + '</td>'
             '<td style="padding:7px 12px;border-bottom:1px solid #eee;text-align:right;'
-            'color:#888;font-size:12px">' + prev_txt + '</td>'
+            'color:#888;font-size:12px">' + prev_cell + '</td>'
             '</tr>'
         )
 
