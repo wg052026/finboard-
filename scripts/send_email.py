@@ -102,7 +102,7 @@ def build_email(data):
             '<tr>'
             '<td style="padding:7px 12px;border-bottom:1px solid #eee;font-size:13px">' + lbl + '</td>'
             '<td style="padding:7px 12px;border-bottom:1px solid #eee;text-align:right;'
-            'font-weight:700;font-size:15px;color:#e5484d">' + f"{today:.1f}%" + '</td>'
+            'font-weight:700;font-size:15px;color:#222">' + f"{today:.1f}%" + '</td>'
             '<td style="padding:7px 12px;border-bottom:1px solid #eee;text-align:right;'
             'color:#888;font-size:12px">' + prev_cell + '</td>'
             '</tr>'
